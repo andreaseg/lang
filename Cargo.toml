@@ -1,0 +1,8 @@
+[package]
+name = "Experimental programming language"
+version = "0.1.0"
+authors = ["Andreas Grønlien <andreas@gronlien.no>"]
+
+[dependencies]
+regex = "1"
+tempdir = "0.3"
