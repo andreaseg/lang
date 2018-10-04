@@ -35,7 +35,7 @@ pub enum Token {
     Const,
     Mut,
     Wildcard,
-    Error,
+    Error(String),
 }
 
 pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
@@ -79,7 +79,7 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
 
         let mut last_symbol = 0;
 
-        for cap in re.captures_iter(&line.unwrap()) {
+        for cap in re.captures_iter(line.as_ref().unwrap()) {
             macro_rules! safe_unwrap {
                 ($name:expr) => {{
                     let m = cap.name($name).unwrap();
@@ -89,7 +89,7 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
                                 line: num,
                                 symbol: last_symbol,
                             },
-                            Token::Error,
+                            Token::Error(line.as_ref().unwrap()[last_symbol..m.start()].to_string()),
                         ))
                     }
                     last_symbol = m.end();
@@ -210,12 +210,12 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
     tokens
 }
 
-fn get_errors(tokens: &[(TokenPosition, Token)]) -> Vec<TokenPosition> {
-    let mut errors: Vec<TokenPosition> = Vec::new();
+pub fn get_errors(tokens: &[(TokenPosition, Token)]) -> Vec<(TokenPosition, String)> {
+    let mut errors = Vec::new();
 
     for tok in tokens {
-        if let (pos, Token::Error) = tok {
-            errors.push(pos.clone())
+        if let (pos, Token::Error(s)) = tok {
+            errors.push((pos.clone(), s.clone()))
         }
     }
 
@@ -285,7 +285,6 @@ mod tests {
     macro_rules! test_scanner {
         ($name: expr, $str_token: expr, $(($line: expr, $sym: expr, $res: expr),)*) => {
             let dir = TempDir::new("scanner_test").unwrap();
-            
             let file_path = dir.path().join(format!("{}.txt", $name));
             println!("Test single token \"{}\"", $name);
             {
@@ -365,8 +364,32 @@ mod tests {
             "error",
             "foo¤bar",
             (0, 0, Token::Name("foo".to_string())),
-            (0, 3, Token::Error),
+            (0, 3, Token::Error("¤".to_string())),
             (0, 5, Token::Name("bar".to_string())),
         );
+    }
+
+    macro_rules! test_scanner_error {
+        ($name: expr, $str_token: expr, $(($line: expr, $sym: expr, $error: expr),)*) => {
+            let dir = TempDir::new("scanner_test").unwrap();
+            let file_path = dir.path().join(format!("{}.txt", $name));
+            println!("Test single token \"{}\"", $name);
+            {
+                let mut file = File::create(file_path.clone()).expect("Unable to create file");
+                file.write($str_token.as_bytes()).expect("Unable to write to file");
+            }
+            let file = File::open(file_path).expect("Unable to open file");
+
+            let tokens = tokenize(file);
+            let left_errors = get_errors(&tokens);
+            let right_errors = vec!($((TokenPosition{line: $line, symbol: $sym}, $error ),)*);
+            println!("{:?}", tokens);
+            assert_eq!(left_errors, right_errors);
+        }
+    }
+
+    #[test]
+    fn extract_error() {
+        test_scanner_error!("scanner_error", "foo¤bar", (0, 3, "¤".to_string()),);
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "Experimental programming language"
+name = "lang"
 version = "0.1.0"
 authors = ["Andreas Grønlien <andreas@gronlien.no>"]
 
