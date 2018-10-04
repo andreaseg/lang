@@ -36,6 +36,9 @@ pub enum Token {
     Mut,
     Wildcard,
     Error(String),
+    Struct,
+    Enum,
+    End
 }
 
 pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
@@ -46,6 +49,7 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
     let re = Regex::new(concat!(
         r"(?P<float>\d*\.\d+)|",
         r"(?P<integer>\d+)|",
+        r"(?P<end>;)|",
         r"(?P<lpar>\()|",
         r"(?P<rpar>\))|",
         r"(?P<lcurl>\{)|",
@@ -58,6 +62,8 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
         r"(?P<const>const)|",
         r"(?P<mut>mut)|",
         r"(?P<wildcard>_)|",
+        r"(?P<struct>struct)|",
+        r"(?P<enum>enum)|",
         r"(?P<method>\.[[:alpha:]][[:alnum:]]*\()|",
         r"(?P<member>\.[[:alpha:]][[:alnum:]]*)|",
         r"(?P<function>[[:alpha:]][[:alnum:]]*\()|",
@@ -66,7 +72,7 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
         r"(?P<comma>,)|",
         r"(?P<rightarrow>->)|",
         r"(?P<fatrightarrow>=>)|",
-        r"(?P<operator>&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|:|~|\?)|",
+        r"(?P<operator><<|>>|&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|:|~|\?)|",
         r"(?P<assign>=)|",
         r#"(?P<string>"[^"]*")|"#,
         r"(?P<whitespace>\s*|\t*|\n*|\r*)"
@@ -115,6 +121,9 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
             } else if cap.name("integer").is_some() {
                 let m = safe_unwrap!("integer");
                 ret_tok!(m, Token::Integer(m.as_str().parse().unwrap()))
+            } else if cap.name("end").is_some() {
+                let m = safe_unwrap!("end");
+                ret_tok!(m, Token::End)
             } else if cap.name("lpar").is_some() {
                 let m = safe_unwrap!("lpar");
                 ret_tok!(m, Token::LeftPar)
@@ -151,6 +160,12 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
             } else if cap.name("wildcard").is_some() {
                 let m = safe_unwrap!("wildcard");
                 ret_tok!(m, Token::Wildcard)
+            } else if cap.name("struct").is_some() {
+                let m = safe_unwrap!("struct");
+                ret_tok!(m, Token::Struct)
+            } else if cap.name("enum").is_some() {
+                let m = safe_unwrap!("enum");
+                ret_tok!(m, Token::Enum)
             } else if cap.name("function").is_some() {
                 let m = safe_unwrap!("function");
                 let mut s = m.as_str().to_string();
@@ -210,7 +225,9 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
     tokens
 }
 
-pub fn get_errors(tokens: &[(TokenPosition, Token)]) -> Vec<(TokenPosition, String)> {
+pub type ScanError = (TokenPosition, String);
+
+pub fn get_errors(tokens: &[(TokenPosition, Token)]) -> Vec<ScanError> {
     let mut errors = Vec::new();
 
     for tok in tokens {
@@ -264,7 +281,6 @@ mod tests {
         test_token!("method", ".map(", Token::Method("map".to_string()));
         test_token!("member", ".val", Token::Member("val".to_string()));
         test_token!("name", "val", Token::Name("val".to_string()));
-        test_token!("operator", "+", Token::Operator("+".to_string()));
         test_token!("assign", "=", Token::Assign);
         test_token!(
             "string",
@@ -280,6 +296,32 @@ mod tests {
         test_token!("const", "const", Token::Const);
         test_token!("mut", "mut", Token::Mut);
         test_token!("wildcard", "_", Token::Wildcard);
+        test_token!("struct", "struct", Token::Struct);
+        test_token!("enum", "enum", Token::Enum);
+
+        test_token!("shiftleft", "<<", Token::Operator("<<".to_string()));
+        test_token!("shiftright", ">>", Token::Operator(">>".to_string()));
+        test_token!("and", "&&", Token::Operator("&&".to_string()));
+        test_token!("or", "||", Token::Operator("||".to_string()));
+        test_token!("incr", "++", Token::Operator("++".to_string()));
+        test_token!("decr", "--", Token::Operator("--".to_string()));
+        test_token!("add", "+", Token::Operator("+".to_string()));
+        test_token!("sub", "-", Token::Operator("-".to_string()));
+        test_token!("mul", "*", Token::Operator("*".to_string()));
+        test_token!("div", "/", Token::Operator("/".to_string()));
+        test_token!("bxor", "^", Token::Operator("^".to_string()));
+        test_token!("bor", "|", Token::Operator("|".to_string()));
+        test_token!("band", "&", Token::Operator("&".to_string()));
+        test_token!("geq", "<=", Token::Operator("<=".to_string()));
+        test_token!("leq", ">=", Token::Operator(">=".to_string()));
+        test_token!("less", "<", Token::Operator("<".to_string()));
+        test_token!("greater", ">", Token::Operator(">".to_string()));
+        test_token!("neq", "!=", Token::Operator("!=".to_string()));
+        test_token!("eq", "==", Token::Operator("==".to_string()));
+        test_token!("mod", "%", Token::Operator("%".to_string()));
+        test_token!("colon", ":", Token::Operator(":".to_string()));
+        test_token!("not", "~", Token::Operator("~".to_string()));
+        test_token!("question", "?", Token::Operator("?".to_string()));
     }
 
     macro_rules! test_scanner {

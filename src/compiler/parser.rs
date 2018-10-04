@@ -20,65 +20,85 @@ use compiler::scanner::{Token, TokenPosition};
  Value := integer | float | string
 */
 
+
+
 mod ast {
 
+    use super::*;
+
+    pub enum ParseError {
+        UnexpectedToken(Token, TokenPosition),
+        UnexpectedEOF
+    }
+
     pub enum Top {
-        Assign(Vec<Box<Assignment>>),
-        Module(terminal::Name, Vec<Box<Top>>),
+        Assign(Vec<Box<Assignment>>),       // type a = b
+        Module(terminal::Name, Box<Top>),   // name::{...}
+        Error(ParseError)
     }
 
     pub enum Assignment {
         Function(
-            terminal::Constness,
-            Box<Signature>,
-            terminal::Name,
-            Box<Statement>,
+            terminal::Constness,        // const | mut | None
+            Box<Signature>,             // (type -> type)
+            terminal::Name,             // name
+            Vec<Box<terminal::Name>>,   // (x, y, ...)
+            Box<Statement>,             // = {...} | = ... ;
         ),
         Field(
-            terminal::Constness,
-            Box<Signature>,
-            terminal::Name,
-            Box<Statement>,
+            terminal::Constness,        // const | mut | None
+            Box<Signature>,             // type
+            terminal::Name,             // name
+            Box<Statement>,             // = {...} | = ... ;
         ),
-        Struct(terminal::Name, Box<Top>),
-        Enum(terminal::Name, Vec<Box<(terminal::Name)>>),
+        Reassign(
+            terminal::Name, // name
+            Box<Statement>  // = {...} | = ... ;
+        ),
+        Struct(terminal::Name, Box<Top>), // struct name = {top}
+        Enum(terminal::Name, Vec<Box<(terminal::Name)>>), // enum name = {(name,)*}
+        Error(ParseError)
     }
 
     pub enum Signature {
-        Function(Box<Signature>, Box<Signature>),
+        Function(Box<Signature>, Box<Signature>), // sign -> sign
         Tuple(Vec<Box<Signature>>),
-        Type(String),
+        Type(String), // Typename
+        Error(ParseError)
     }
 
     pub enum Statement {
-        FunctionBody(Vec<Box<Top>>, Box<Expression>),
-        Expression(Box<Predicate>, Box<Expression>),
+        Assign(Box<Assignment>, Box<Statement> /* next */),
+        Call(Box<FunctionCall>, Box<Statement> /* next */),
         If(
-            Box<Predicate>,
-            Box<Statement>,
-            Vec<(Box<Predicate>, Box<Statement>)>, // Else if
+            Box<Expression>, // If expression
+            Box<Statement>, // Then statement
+            Vec<(Box<Expression>, Box<Statement>)>, // (else if expression then statement )*
             Option<Box<Statement>>, // Else
+            Box<Statement>  /* next */
         ),
-        Match(Vec<Box<(terminal::Name, Statement)>>, Box<Statement>),
-    }
-
-    pub enum Predicate {
-        Compare(terminal::Compare, Box<Expression>, Box<Expression>),
-        Logic(terminal::LogicOperator, Box<Predicate>, Box<Predicate>),
-        Unary(terminal::UnaryLogicOperator, Box<Predicate>),
-        Primary(Box<Binding>),
+        Match(Vec<Box<(terminal::Name, Statement)>>, Option<Box<Statement>> /* _ => stmt */, Box<Statement> /* next */),
+        Return(Box<Expression> /* return expression */),
+        Error(ParseError)
     }
 
     pub enum Expression {
         Binary(terminal::Operator, Box<Expression>, Box<Expression>),
         Unary(terminal::UnaryOperator, Box<Expression>),
         Primary(Box<Binding>),
+        Error(ParseError)
     }
 
     pub enum Binding {
         Literal(Box<terminal::Literal>),
         Field(Vec<terminal::Module>, terminal::Name),
+        Function(Vec<FunctionCall>), // fun(..).fun(..).fun(..)
+        Error(ParseError)
+    }
+
+    pub enum FunctionCall {
         Function(Vec<terminal::Module>, terminal::Name, Vec<Box<Expression>>),
+        Error(ParseError)
     }
 
     pub mod terminal {
@@ -100,22 +120,22 @@ mod ast {
             Sub,
             Mul,
             Div,
+            BitAnd,
+            BitOr,
+            BitXor,
+            BitShiftLeft,
+            BitShiftRight,
+            And,
+            Or,
+            Neg,
+            Mod
         }
 
         pub enum UnaryOperator {
             Identity,
             Neg,
-        }
-
-        pub enum LogicOperator {
-            And,
-            Or,
-            Neg,
-        }
-
-        pub enum UnaryLogicOperator {
-            Idendity,
-            Neg,
+            Increment,
+            Decrement
         }
 
         pub enum Compare {
