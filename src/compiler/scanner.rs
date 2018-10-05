@@ -1,5 +1,6 @@
 #![allow(dead_code)]
-use regex::Regex;
+use num::FromPrimitive;
+use regex::{Match, Regex};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -38,7 +39,85 @@ pub enum Token {
     Error(String),
     Struct,
     Enum,
-    End
+    End,
+}
+
+macro_rules! make_regex {
+    ($(($name: ident, $regex: expr),)*) => {
+        fn get_regex() -> Regex {
+            Regex::new(concat!($($regex,)*)).unwrap()
+        }
+
+        #[derive(FromPrimitive)]
+        enum Re {
+            None,
+            $($name, )*
+        }
+    }
+}
+
+make_regex!(
+    (Float, r"(?P<float>\d*\.\d+)|"),
+    (Integer, r"(?P<integer>\d+)|"),
+    (End, r"(?P<end>;)|"),
+    (LPar, r"(?P<lpar>\()|"),
+    (RPar, r"(?P<rpar>\))|"),
+    (LCurl, r"(?P<lcurl>\{)|"),
+    (RCurl, r"(?P<rcurl>\})|"),
+    (True, r"(?P<true>true)|"),
+    (False, r"(?P<false>false)|"),
+    (If, r"(?P<if>if)|"),
+    (Else, r"(?P<else>else)|"),
+    (Match, r"(?P<match>match)|"),
+    (Const, r"(?P<const>const)|"),
+    (Mut, r"(?P<mut>mut)|"),
+    (Wildcard, r"(?P<wildcard>_)|"),
+    (Struct, r"(?P<struct>struct)|"),
+    (Enum, r"(?P<enum>enum)|"),
+    (Method, r"(?P<method>\.[[:alpha:]][[:alnum:]]*\()|"),
+    (Member, r"(?P<member>\.[[:alpha:]][[:alnum:]]*)|"),
+    (Function, r"(?P<function>[[:alpha:]][[:alnum:]]*\()|"),
+    (Module, r"(?P<module>[[:alpha:]][[:alnum:]]*::)|"),
+    (Name, r"(?P<name>[[:alpha:]][[:alnum:]]*)|"),
+    (Comma, r"(?P<comma>,)|"),
+    (Rightarrow, r"(?P<rightarrow>->)|"),
+    (FatRightArrow, r"(?P<fatrightarrow>=>)|"),
+    (
+        Operator,
+        r"(?P<operator><<|>>|&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|:|~|\?)|"
+    ),
+    (Assign, r"(?P<assign>=)|"),
+    (String, r#"(?P<string>"[^"]*")|"#),
+    (Whitespace, r"(?P<whitespace>\s*|\t*|\n*|\r*)"),
+);
+
+fn find_matches<'a>(re: &Regex, line: &'a str) -> Vec<(usize, Match<'a>)> {
+    let names = re.capture_names()
+        .enumerate()
+        .skip(1)
+        .map(|(i, name)| (i, name.unwrap()))
+        .collect::<Vec<(usize, &str)>>();
+
+    let mut matches: Vec<(usize, Match)> = Vec::new();
+
+    for cap in re.captures_iter(line) {
+        matches.extend(
+            names
+                .iter()
+                .find(|(_, name)| cap.name(name).is_some())
+                .map(|(i, name)| (*i, cap.name(name).unwrap())),
+        );
+    }
+
+    matches
+}
+
+pub fn trunc_cap(cap: &Match, start: usize, end: usize) -> String {
+    let mut s = cap.as_str().to_string();
+    s.drain(..start);
+    let l = s.len();
+    s.truncate(l - end);
+    s
 }
 
 pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
@@ -46,37 +125,7 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
 
     let mut tokens = Vec::new();
 
-    let re = Regex::new(concat!(
-        r"(?P<float>\d*\.\d+)|",
-        r"(?P<integer>\d+)|",
-        r"(?P<end>;)|",
-        r"(?P<lpar>\()|",
-        r"(?P<rpar>\))|",
-        r"(?P<lcurl>\{)|",
-        r"(?P<rcurl>\})|",
-        r"(?P<true>true)|",
-        r"(?P<false>false)|",
-        r"(?P<if>if)|",
-        r"(?P<else>else)|",
-        r"(?P<match>match)|",
-        r"(?P<const>const)|",
-        r"(?P<mut>mut)|",
-        r"(?P<wildcard>_)|",
-        r"(?P<struct>struct)|",
-        r"(?P<enum>enum)|",
-        r"(?P<method>\.[[:alpha:]][[:alnum:]]*\()|",
-        r"(?P<member>\.[[:alpha:]][[:alnum:]]*)|",
-        r"(?P<function>[[:alpha:]][[:alnum:]]*\()|",
-        r"(?P<module>[[:alpha:]][[:alnum:]]*::)|",
-        r"(?P<name>[[:alpha:]][[:alnum:]]*)|",
-        r"(?P<comma>,)|",
-        r"(?P<rightarrow>->)|",
-        r"(?P<fatrightarrow>=>)|",
-        r"(?P<operator><<|>>|&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|:|~|\?)|",
-        r"(?P<assign>=)|",
-        r#"(?P<string>"[^"]*")|"#,
-        r"(?P<whitespace>\s*|\t*|\n*|\r*)"
-    )).unwrap();
+    let re = get_regex();
 
     for (num, line) in buf_reader.lines().enumerate() {
         if line.as_ref().unwrap().starts_with("//") {
@@ -85,137 +134,63 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
 
         let mut last_symbol = 0;
 
-        for cap in re.captures_iter(line.as_ref().unwrap()) {
-            macro_rules! safe_unwrap {
-                ($name:expr) => {{
-                    let m = cap.name($name).unwrap();
-                    if last_symbol != m.start() {
-                        tokens.push((
-                            TokenPosition {
-                                line: num,
-                                symbol: last_symbol,
-                            },
-                            Token::Error(line.as_ref().unwrap()[last_symbol..m.start()].to_string()),
-                        ))
-                    }
-                    last_symbol = m.end();
-                    m
-                }};
-            }
-
+        for (i, cap) in find_matches(&re, line.as_ref().unwrap()) {
             macro_rules! ret_tok {
-                ($cap:ident, $token:expr) => {
+                ($token:expr) => {
                     (
                         TokenPosition {
                             line: num,
-                            symbol: $cap.start(),
+                            symbol: cap.start(),
                         },
                         $token,
                     )
                 };
             }
 
-            let token = if cap.name("float").is_some() {
-                let m = safe_unwrap!("float");
-                ret_tok!(m, Token::Float(m.as_str().parse().unwrap()))
-            } else if cap.name("integer").is_some() {
-                let m = safe_unwrap!("integer");
-                ret_tok!(m, Token::Integer(m.as_str().parse().unwrap()))
-            } else if cap.name("end").is_some() {
-                let m = safe_unwrap!("end");
-                ret_tok!(m, Token::End)
-            } else if cap.name("lpar").is_some() {
-                let m = safe_unwrap!("lpar");
-                ret_tok!(m, Token::LeftPar)
-            } else if cap.name("rpar").is_some() {
-                let m = safe_unwrap!("rpar");
-                ret_tok!(m, Token::RightPar)
-            } else if cap.name("lcurl").is_some() {
-                let m = safe_unwrap!("lcurl");
-                ret_tok!(m, Token::LeftCurl)
-            } else if cap.name("rcurl").is_some() {
-                let m = safe_unwrap!("rcurl");
-                ret_tok!(m, Token::RightCurl)
-            } else if cap.name("true").is_some() {
-                let m = safe_unwrap!("true");
-                ret_tok!(m, Token::Truthy(true))
-            } else if cap.name("false").is_some() {
-                let m = safe_unwrap!("false");
-                ret_tok!(m, Token::Truthy(false))
-            } else if cap.name("if").is_some() {
-                let m = safe_unwrap!("if");
-                ret_tok!(m, Token::If)
-            } else if cap.name("else").is_some() {
-                let m = safe_unwrap!("else");
-                ret_tok!(m, Token::Else)
-            } else if cap.name("match").is_some() {
-                let m = safe_unwrap!("match");
-                ret_tok!(m, Token::Match)
-            } else if cap.name("const").is_some() {
-                let m = safe_unwrap!("const");
-                ret_tok!(m, Token::Const)
-            } else if cap.name("mut").is_some() {
-                let m = safe_unwrap!("mut");
-                ret_tok!(m, Token::Mut)
-            } else if cap.name("wildcard").is_some() {
-                let m = safe_unwrap!("wildcard");
-                ret_tok!(m, Token::Wildcard)
-            } else if cap.name("struct").is_some() {
-                let m = safe_unwrap!("struct");
-                ret_tok!(m, Token::Struct)
-            } else if cap.name("enum").is_some() {
-                let m = safe_unwrap!("enum");
-                ret_tok!(m, Token::Enum)
-            } else if cap.name("function").is_some() {
-                let m = safe_unwrap!("function");
-                let mut s = m.as_str().to_string();
-                let l = s.len();
-                s.truncate(l - 1);
-                ret_tok!(m, Token::Function(s))
-            } else if cap.name("module").is_some() {
-                let m = safe_unwrap!("module");
-                let mut s = m.as_str().to_string();
-                let l = s.len();
-                s.truncate(l - 2);
-                ret_tok!(m, Token::Module(s))
-            } else if cap.name("method").is_some() {
-                let m = safe_unwrap!("method");
-                let mut s = m.as_str().to_string();
-                s.drain(..1);
-                let l = s.len();
-                s.truncate(l - 1);
-                ret_tok!(m, Token::Method(s))
-            } else if cap.name("member").is_some() {
-                let m = safe_unwrap!("member");
-                let mut s = m.as_str().to_string();
-                s.drain(..1);
-                ret_tok!(m, Token::Member(s))
-            } else if cap.name("operator").is_some() {
-                let m = safe_unwrap!("operator");
-                ret_tok!(m, Token::Operator(m.as_str().to_string()))
-            } else if cap.name("name").is_some() {
-                let m = safe_unwrap!("name");
-                ret_tok!(m, Token::Name(m.as_str().to_string()))
-            } else if cap.name("comma").is_some() {
-                let m = safe_unwrap!("comma");
-                ret_tok!(m, Token::Comma)
-            } else if cap.name("rightarrow").is_some() {
-                let m = safe_unwrap!("rightarrow");
-                ret_tok!(m, Token::RightArrow)
-            } else if cap.name("fatrightarrow").is_some() {
-                let m = safe_unwrap!("fatrightarrow");
-                ret_tok!(m, Token::FatRightArrow)
-            } else if cap.name("assign").is_some() {
-                let m = safe_unwrap!("assign");
-                ret_tok!(m, Token::Assign)
-            } else if cap.name("whitespace").is_some() {
-                safe_unwrap!("whitespace");
-                continue;
-            } else if cap.name("string").is_some() {
-                let m = safe_unwrap!("string");
-                ret_tok!(m, Token::String(m.as_str().to_string()))
-            } else {
-                panic!("Unable to parse expression");
+            if last_symbol != cap.start() {
+                tokens.push((
+                    TokenPosition {
+                        line: num,
+                        symbol: last_symbol,
+                    },
+                    Token::Error(line.as_ref().unwrap()[last_symbol..cap.start()].to_string()),
+                ))
+            }
+            last_symbol = cap.end();
+
+            let token = match Re::from_usize(i).unwrap() {
+                Re::Float => ret_tok!(Token::Float(cap.as_str().parse().unwrap())),
+                Re::Integer => ret_tok!(Token::Integer(cap.as_str().parse().unwrap())),
+                Re::End => ret_tok!(Token::End),
+                Re::LPar => ret_tok!(Token::LeftPar),
+                Re::RPar => ret_tok!(Token::RightPar),
+                Re::LCurl => ret_tok!(Token::LeftCurl),
+                Re::RCurl => ret_tok!(Token::RightCurl),
+                Re::True => ret_tok!(Token::Truthy(true)),
+                Re::False => ret_tok!(Token::Truthy(false)),
+                Re::If => ret_tok!(Token::If),
+                Re::Else => ret_tok!(Token::Else),
+                Re::Match => ret_tok!(Token::Match),
+                Re::Const => ret_tok!(Token::Const),
+                Re::Mut => ret_tok!(Token::Mut),
+                Re::Wildcard => ret_tok!(Token::Wildcard),
+                Re::Struct => ret_tok!(Token::Struct),
+                Re::Enum => ret_tok!(Token::Enum),
+                Re::Method => ret_tok!(Token::Method(trunc_cap(&cap, 1, 1))),
+                Re::Member => ret_tok!(Token::Member(trunc_cap(&cap, 1, 0))),
+                Re::Function => ret_tok!(Token::Function(trunc_cap(&cap, 0, 1))),
+                Re::Module => ret_tok!(Token::Module(trunc_cap(&cap, 0, 2))),
+                Re::Name => ret_tok!(Token::Name(cap.as_str().to_string())),
+                Re::Comma => ret_tok!(Token::Comma),
+                Re::Rightarrow => ret_tok!(Token::RightArrow),
+                Re::FatRightArrow => ret_tok!(Token::FatRightArrow),
+                Re::Operator => ret_tok!(Token::Operator(cap.as_str().to_string())),
+                Re::Assign => ret_tok!(Token::Assign),
+                Re::String => ret_tok!(Token::String(cap.as_str().to_string())),
+                Re::Whitespace => {
+                    continue;
+                }
+                Re::None => unreachable!(),
             };
 
             tokens.push(token);

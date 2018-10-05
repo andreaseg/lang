@@ -1,5 +1,8 @@
+extern crate num;
 extern crate regex;
 extern crate tempdir;
+#[macro_use]
+extern crate num_derive;
 
 mod compiler;
 
