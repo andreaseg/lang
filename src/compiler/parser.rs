@@ -34,8 +34,8 @@ mod ast {
 
     #[derive(PartialEq, Debug, Clone)]
     pub enum Top {
-        Assign(Vec<Box<Assignment>>),   // type a = b
-        Module(ModuleSymbol, Box<S>),   // name::{...}
+        Assign(Vec<Box<Assignment>>), // type a = b
+        Module(ModuleSymbol, Box<S>), // name::{...}
         Error(ParseError),
     }
 
