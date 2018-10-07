@@ -24,47 +24,44 @@ mod ast {
 
     use super::*;
 
+    #[derive(PartialEq, Debug, Clone)]
     pub enum ParseError {
         UnexpectedToken(Token, TokenPosition),
         UnexpectedEOF,
     }
 
+    pub type S = Vec<Top>;
+
+    #[derive(PartialEq, Debug, Clone)]
     pub enum Top {
-        Assign(Vec<Box<Assignment>>),     // type a = b
-        Module(terminal::Name, Box<Top>), // name::{...}
+        Assign(Vec<Box<Assignment>>),   // type a = b
+        Module(ModuleSymbol, Box<S>),   // name::{...}
         Error(ParseError),
     }
 
+    #[derive(PartialEq, Debug, Clone)]
     pub enum Assignment {
         Function(
-            terminal::Constness,      // const | mut | None
-            Box<Signature>,           // (type -> type)
-            terminal::Name,           // name
-            Vec<Box<terminal::Name>>, // (x, y, ...)
-            Box<Statement>,           // = {...} | = ... ;
+            terminal::Constness, // const | mut | None
+            Symbol,              // name
+            Vec<Box<Symbol>>,    // (x, y, ...)
+            Box<Statement>,      // = {...} | = ... ;
         ),
         Field(
             terminal::Constness, // const | mut | None
-            Box<Signature>,      // type
-            terminal::Name,      // name
+            Symbol,              // name
             Box<Statement>,      // = {...} | = ... ;
         ),
         Reassign(
-            terminal::Name, // name
+            Symbol,         // name
             Box<Statement>, // = {...} | = ... ;
         ),
-        Struct(terminal::Name, Box<Top>), // struct name = {top}
-        Enum(terminal::Name, Vec<Box<(terminal::Name)>>), // enum name = {(name,)*}
+        Struct(Symbol, Box<Top>),         // struct name = {top}
+        Enum(Symbol, Vec<Box<(Symbol)>>), // enum name = {(name,)*}
         Error(ParseError),
     }
 
-    pub enum Signature {
-        Function(Box<Signature>, Box<Signature>), // sign -> sign
-        Tuple(Vec<Box<Signature>>),
-        Type(String), // Typename
-        Error(ParseError),
-    }
-
+    #[derive(PartialEq, Debug, Clone)]
     pub enum Statement {
         Assign(Box<Assignment>, Box<Statement> /* next */),
         Call(Box<FunctionCall>, Box<Statement> /* next */),
@@ -76,7 +73,7 @@ mod ast {
             Box<Statement>,                         /* next */
         ),
         Match(
-            Vec<Box<(terminal::Name, Statement)>>,
+            Vec<Box<(Symbol, Statement)>>,
             Option<Box<Statement>>, /* _ => stmt */
             Box<Statement>,         /* next */
         ),
@@ -84,6 +81,7 @@ mod ast {
         Error(ParseError),
     }
 
+    #[derive(PartialEq, Debug, Clone)]
     pub enum Expression {
         Binary(terminal::Operator, Box<Expression>, Box<Expression>),
         Unary(terminal::UnaryOperator, Box<Expression>),
@@ -91,25 +89,29 @@ mod ast {
         Error(ParseError),
     }
 
+    #[derive(PartialEq, Debug, Clone)]
     pub enum Binding {
         Literal(Box<terminal::Literal>),
-        Field(Vec<terminal::Module>, terminal::Name),
+        Field(ModuleSymbol, Symbol),
         Function(Vec<FunctionCall>), // fun(..).fun(..).fun(..)
         Error(ParseError),
     }
 
+    #[derive(PartialEq, Debug, Clone)]
     pub enum FunctionCall {
-        Function(Vec<terminal::Module>, terminal::Name, Vec<Box<Expression>>),
+        Function(ModuleSymbol, Symbol, Vec<Box<Expression>>),
         Error(ParseError),
     }
 
     pub mod terminal {
+        #[derive(PartialEq, Debug, Clone)]
         pub enum Constness {
             Const,
             Mut,
             None,
         }
 
+        #[derive(PartialEq, Debug, Clone)]
         pub enum Literal {
             Float(f64),
             Integer(i64),
@@ -117,6 +119,7 @@ mod ast {
             Bool(bool),
         }
 
+        #[derive(PartialEq, Debug, Clone)]
         pub enum Operator {
             Add,
             Sub,
@@ -133,6 +136,7 @@ mod ast {
             Mod,
         }
 
+        #[derive(PartialEq, Debug, Clone)]
         pub enum UnaryOperator {
             Identity,
             Neg,
@@ -140,6 +144,7 @@ mod ast {
             Decrement,
         }
 
+        #[derive(PartialEq, Debug, Clone)]
         pub enum Compare {
             Equal,
             NotEqual,
@@ -148,14 +153,41 @@ mod ast {
             GreaterEqual,
             SmallerEqual,
         }
-
-        pub type Module = String;
-
-        pub type Name = String;
     }
 }
 
-pub fn parse(mut tokens: Vec<(TokenPosition, Token)>) -> ast::Top {
+#[derive(PartialEq, Debug, Clone)]
+pub enum Type {
+    Int,
+    Float,
+    Double,
+    Uint,
+    Bool,
+    String,
+    Ptr(Box<Type>),
+    V1,
+    V2,
+    V4,
+    V8,
+    V16,
+    V32,
+    V64,
+    List(Box<Type>),
+    Function(Box<Type>, Box<Type>),
+    Tuple(Vec<Box<Type>>),
+    Declaration(String),
+    Undefined,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct Symbol {
+    name: String,
+    ty: Type,
+}
+
+pub type ModuleSymbol = Vec<String>;
+
+pub fn parse(mut tokens: Vec<(TokenPosition, Token)>) -> ast::S {
     unimplemented!()
 }
 
@@ -163,7 +195,61 @@ pub fn parse(mut tokens: Vec<(TokenPosition, Token)>) -> ast::Top {
 mod tests {
 
     use super::*;
+    use compiler::scanner;
+    use std::fs::File;
     use std::io::Write;
     use tempdir::TempDir;
+
+    fn test_parser(name: &str, input: &str, expected_result: ast::S) {
+        let dir = TempDir::new("scanner_test").unwrap();
+        let file_path = dir.path().join(format!("{}.txt", name));
+        println!("Test single token \"{}\"", name);
+        {
+            let mut file = File::create(file_path.clone()).expect("Unable to create file");
+            file.write(input.as_bytes())
+                .expect("Unable to write to file");
+        }
+        let file = File::open(file_path).expect("Unable to open file");
+
+        println!("{}", input);
+
+        let tokens = scanner::tokenize(file);
+        {
+            let errors = scanner::get_errors(&tokens);
+            if !errors.is_empty() {
+                let mut error_message = String::new();
+                for (pos, message) in errors {
+                    error_message += format!("Error at {} \"{}\"\n", pos, message).as_str();
+                }
+                panic!(error_message);
+            }
+        }
+
+        let ast = parse(tokens);
+
+        println!("{:?}", ast);
+
+        assert_eq!(ast, expected_result);
+    }
+
+    #[test]
+    fn assign() {
+        test_parser(
+            "assign",
+            "int foo = 1;",
+            vec![ast::Top::Assign(vec![Box::new(ast::Assignment::Field(
+                ast::terminal::Constness::None,
+                Symbol {
+                    name: "foo".to_string(),
+                    ty: Type::Int,
+                },
+                Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
+                    Box::new(ast::Binding::Literal(Box::new(
+                        ast::terminal::Literal::Integer(1),
+                    ))),
+                )))),
+            ))])],
+        );
+    }
 
 }

@@ -1,3 +1,4 @@
+#![feature(tool_lints)]
 extern crate num;
 extern crate regex;
 extern crate tempdir;

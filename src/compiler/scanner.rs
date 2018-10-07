@@ -1,6 +1,8 @@
 #![allow(dead_code)]
+#![allow(clippy::all)] // Clippy crashes on #[derive(FromPrimitive)]: Issue https://github.com/rust-lang-nursery/rust-clippy/issues/2910
 use num::FromPrimitive;
 use regex::{Match, Regex};
+use std::fmt;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
@@ -8,6 +10,12 @@ use std::io::{BufRead, BufReader};
 pub struct TokenPosition {
     line: usize,
     symbol: usize,
+}
+
+impl fmt::Display for TokenPosition {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "line {} and symbol {}", self.line, self.symbol)
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -92,7 +100,8 @@ make_regex!(
 );
 
 fn find_matches<'a>(re: &Regex, line: &'a str) -> Vec<(usize, Match<'a>)> {
-    let names = re.capture_names()
+    let names = re
+        .capture_names()
         .enumerate()
         .skip(1)
         .map(|(i, name)| (i, name.unwrap()))
