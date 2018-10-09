@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![allow(unused_variables)]
 use compiler::scanner::{Token, TokenPosition};
 
 /* Grammar
@@ -26,16 +27,19 @@ mod ast {
 
     #[derive(PartialEq, Debug, Clone)]
     pub enum ParseError {
-        UnexpectedToken((TokenPosition, Token), /* message */String),
+        UnexpectedToken((TokenPosition, Token), /* message */ String),
         UnexpectedEOF,
     }
 
-    pub type S = Vec<Top>;
+    #[derive(PartialEq, Debug, Clone)]
+    pub struct S {
+        code: Vec<Top>
+    }
 
     #[derive(PartialEq, Debug, Clone)]
     pub enum Top {
         Assign(Box<Assignment>), // type a = b
-        Module(Module, Box<S>), // name::{...}
+        Module(Module, Box<S>),  // name::{...}
         Error(ParseError),
     }
 
@@ -187,7 +191,6 @@ pub struct Symbol {
 
 pub type Module = String;
 
-
 pub fn parse(mut tokens: Vec<(TokenPosition, Token)>) -> Result<ast::S, Vec<ast::ParseError>> {
     tokens.reverse();
     let mut ast = parse_s(&mut tokens);
@@ -199,7 +202,6 @@ pub fn parse(mut tokens: Vec<(TokenPosition, Token)>) -> Result<ast::S, Vec<ast:
     Ok(ast)
 }
 
-//type Tokens = std::iter::Peekable<std::vec::IntoIter<(TokenPosition, Token)>>;
 type Tokens = Vec<(TokenPosition, Token)>;
 
 fn parse_s(tokens: &mut Tokens) -> ast::S {
@@ -256,30 +258,43 @@ fn parse_mul_expr(tokens: &mut Tokens) -> ast::Expression {
 }
 
 fn parse_binding(tokens: &mut Tokens) -> ast::Binding {
-
     let token = match tokens.pop() {
         Some(val) => val,
-        None => return ast::Binding::Error(ast::ParseError::UnexpectedEOF)
+        None => return ast::Binding::Error(ast::ParseError::UnexpectedEOF),
     };
 
     println!("{:?}", token);
 
-    return match token {
+    match token {
         (_, Token::Function(_)) => {
             tokens.push(token);
             let fun = parse_function_call(tokens);
             let chain = parse_chained_binding(tokens);
             ast::Binding::Function(fun, chain)
-        },
-        (_, Token::Name(name)) => {
-            ast::Binding::Field(Symbol{name: name.clone(), ty: Type::Undefined},
-            parse_chained_binding(tokens))
-        },
-        (_, Token::Float(x)) => {ast::Binding::Literal(Box::new(ast::terminal::Literal::Float(x.clone())))},
-        (_, Token::Integer(n)) => {ast::Binding::Literal(Box::new(ast::terminal::Literal::Integer(n.clone())))},
-        (_, Token::Truthy(b)) => {ast::Binding::Literal(Box::new(ast::terminal::Literal::Bool(b.clone())))},
-        (_, Token::String(s)) => {ast::Binding::Literal(Box::new(ast::terminal::Literal::String(s.clone())))},
-        (pos, token) => ast::Binding::Error(ast::ParseError::UnexpectedToken((pos, token), "Expected function, name, or literal binding".to_string()))
+        }
+        (_, Token::Name(name)) => ast::Binding::Field(
+            Symbol {
+                name: name.clone(),
+                ty: Type::Undefined,
+            },
+            parse_chained_binding(tokens),
+        ),
+        (_, Token::Float(x)) => {
+            ast::Binding::Literal(Box::new(ast::terminal::Literal::Float(x)))
+        }
+        (_, Token::Integer(n)) => {
+            ast::Binding::Literal(Box::new(ast::terminal::Literal::Integer(n)))
+        }
+        (_, Token::Truthy(b)) => {
+            ast::Binding::Literal(Box::new(ast::terminal::Literal::Bool(b)))
+        }
+        (_, Token::String(s)) => {
+            ast::Binding::Literal(Box::new(ast::terminal::Literal::String(s.clone())))
+        }
+        (pos, token) => ast::Binding::Error(ast::ParseError::UnexpectedToken(
+            (pos, token),
+            "Expected function, name, or literal binding".to_string(),
+        )),
     }
 }
 
@@ -291,10 +306,18 @@ fn parse_chained_binding(tokens: &mut Tokens) -> Vec<Box<ast::Binding>> {
 fn parse_function_call(tokens: &mut Tokens) -> ast::FunctionCall {
     let symbol = match tokens.pop() {
         Some(val) => match val {
-            (_, Token::Function(name)) => Symbol{name: name, ty: Type::Undefined},
-            (pos, token) => return ast::FunctionCall::Error(ast::ParseError::UnexpectedToken((pos.clone(), token.clone()), "Expected function".to_string()))
+            (_, Token::Function(name)) => Symbol {
+                name,
+                ty: Type::Undefined,
+            },
+            (pos, token) => {
+                return ast::FunctionCall::Error(ast::ParseError::UnexpectedToken(
+                    (pos.clone(), token.clone()),
+                    "Expected function".to_string(),
+                ))
+            }
         },
-        None => return ast::FunctionCall::Error(ast::ParseError::UnexpectedEOF)
+        None => return ast::FunctionCall::Error(ast::ParseError::UnexpectedEOF),
     };
 
     let mut args: Vec<Box<ast::Expression>> = Vec::new();
@@ -307,7 +330,7 @@ fn parse_function_call(tokens: &mut Tokens) -> ast::FunctionCall {
                 tokens.push(other);
             }
         },
-        None => return ast::FunctionCall::Error(ast::ParseError::UnexpectedEOF)
+        None => return ast::FunctionCall::Error(ast::ParseError::UnexpectedEOF),
     }
 
     loop {
@@ -317,9 +340,14 @@ fn parse_function_call(tokens: &mut Tokens) -> ast::FunctionCall {
             Some(val) => match val {
                 (_, Token::Comma) => continue,
                 (_, Token::RightPar) => break,
-                (pos, token) => return ast::FunctionCall::Error(ast::ParseError::UnexpectedToken((pos.clone(), token.clone()), "Expected comma or right par".to_string()))
+                (pos, token) => {
+                    return ast::FunctionCall::Error(ast::ParseError::UnexpectedToken(
+                        (pos.clone(), token.clone()),
+                        "Expected comma or right par".to_string(),
+                    ))
+                }
             },
-            None => return ast::FunctionCall::Error(ast::ParseError::UnexpectedEOF)
+            None => return ast::FunctionCall::Error(ast::ParseError::UnexpectedEOF),
         };
     }
 
@@ -401,39 +429,36 @@ mod tests {
         );
     }
 
-
-
     #[test]
     fn integer_binding() {
         let mut tokens = generate_test_tokens("integer", "1");
         let ast = parse_binding(&mut tokens);
-        assert_eq!(ast, ast::Binding::Literal(
-            Box::new(
-                ast::terminal::Literal::Integer(1)
-            )
-        ))
+        assert_eq!(
+            ast,
+            ast::Binding::Literal(Box::new(ast::terminal::Literal::Integer(1)))
+        )
     }
 
     #[test]
     fn float_binding() {
         let mut tokens = generate_test_tokens("float", "1.0");
         let ast = parse_binding(&mut tokens);
-        assert_eq!(ast, ast::Binding::Literal(
-            Box::new(
-                ast::terminal::Literal::Float(1.0)
-            )
-        ))
+        assert_eq!(
+            ast,
+            ast::Binding::Literal(Box::new(ast::terminal::Literal::Float(1.0)))
+        )
     }
 
     #[test]
     fn string_binding() {
         let mut tokens = generate_test_tokens("string", "\"string\"");
         let ast = parse_binding(&mut tokens);
-        assert_eq!(ast, ast::Binding::Literal(
-            Box::new(
-                ast::terminal::Literal::String("string".to_string())
-            )
-        ))
+        assert_eq!(
+            ast,
+            ast::Binding::Literal(Box::new(ast::terminal::Literal::String(
+                "string".to_string()
+            )))
+        )
     }
 
     #[test]
@@ -441,20 +466,18 @@ mod tests {
         {
             let mut tokens = generate_test_tokens("bool_true", "true");
             let ast = parse_binding(&mut tokens);
-            assert_eq!(ast, ast::Binding::Literal(
-                Box::new(
-                    ast::terminal::Literal::Bool(true)
-                )
-            ))
+            assert_eq!(
+                ast,
+                ast::Binding::Literal(Box::new(ast::terminal::Literal::Bool(true)))
+            )
         }
         {
             let mut tokens = generate_test_tokens("bool_false", "false");
             let ast = parse_binding(&mut tokens);
-            assert_eq!(ast, ast::Binding::Literal(
-                Box::new(
-                    ast::terminal::Literal::Bool(false)
-                )
-            ))
+            assert_eq!(
+                ast,
+                ast::Binding::Literal(Box::new(ast::terminal::Literal::Bool(false)))
+            )
         }
     }
 
@@ -462,9 +485,13 @@ mod tests {
     fn field_binding() {
         let mut tokens = generate_test_tokens("field_binding", "foo");
         let ast = parse_binding(&mut tokens);
-        assert_eq!(ast, 
+        assert_eq!(
+            ast,
             ast::Binding::Field(
-                Symbol {name: "foo".to_string(), ty: Type::Undefined},
+                Symbol {
+                    name: "foo".to_string(),
+                    ty: Type::Undefined
+                },
                 vec![]
             )
         );
@@ -474,10 +501,14 @@ mod tests {
     fn empty_function_binding() {
         let mut tokens = generate_test_tokens("empty_function_binding", "foo()");
         let ast = parse_binding(&mut tokens);
-        assert_eq!(ast,
+        assert_eq!(
+            ast,
             ast::Binding::Function(
                 ast::FunctionCall::Function(
-                    Symbol {name: "foo".to_string(), ty: Type::Undefined},
+                    Symbol {
+                        name: "foo".to_string(),
+                        ty: Type::Undefined
+                    },
                     vec![]
                 ),
                 vec![]

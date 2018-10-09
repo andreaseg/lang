@@ -20,7 +20,7 @@ impl fmt::Display for TokenPosition {
 
 impl TokenPosition {
     pub fn new(line: usize, symbol: usize) -> Self {
-        TokenPosition {line, symbol}
+        TokenPosition { line, symbol }
     }
 }
 
@@ -257,7 +257,10 @@ mod tests {
                 }
                 let file = File::open(file_path).expect("Unable to open file");
 
-                let tokens = tokenize(file).expect("Errors scanning string").pop().expect("Missing token in file");
+                let tokens = tokenize(file)
+                    .expect("Errors scanning string")
+                    .pop()
+                    .expect("Missing token in file");
                 assert_eq!(
                     tokens,
                     (TokenPosition { line: 0, symbol: 0 }, $result_token)
