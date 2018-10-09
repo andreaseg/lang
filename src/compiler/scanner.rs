@@ -18,6 +18,12 @@ impl fmt::Display for TokenPosition {
     }
 }
 
+impl TokenPosition {
+    pub fn new(line: usize, symbol: usize) -> Self {
+        TokenPosition {line, symbol}
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum Token {
     Float(f64),
@@ -121,7 +127,7 @@ fn find_matches<'a>(re: &Regex, line: &'a str) -> Vec<(usize, Match<'a>)> {
     matches
 }
 
-pub fn trunc_cap(cap: &Match, start: usize, end: usize) -> String {
+fn trunc_cap(cap: &Match, start: usize, end: usize) -> String {
     let mut s = cap.as_str().to_string();
     s.drain(..start);
     let l = s.len();
@@ -129,7 +135,7 @@ pub fn trunc_cap(cap: &Match, start: usize, end: usize) -> String {
     s
 }
 
-pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
+pub fn tokenize(file: File) -> Result<Vec<(TokenPosition, Token)>, Vec<ScanError>> {
     let buf_reader = BufReader::new(file);
 
     let mut tokens = Vec::new();
@@ -195,7 +201,7 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
                 Re::FatRightArrow => ret_tok!(Token::FatRightArrow),
                 Re::Operator => ret_tok!(Token::Operator(cap.as_str().to_string())),
                 Re::Assign => ret_tok!(Token::Assign),
-                Re::String => ret_tok!(Token::String(cap.as_str().to_string())),
+                Re::String => ret_tok!(Token::String(trunc_cap(&cap, 1, 1))),
                 Re::Whitespace => {
                     continue;
                 }
@@ -206,12 +212,17 @@ pub fn tokenize(file: File) -> Vec<(TokenPosition, Token)> {
         }
     }
 
-    tokens
+    let errors = get_errors(&tokens);
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    Ok(tokens)
 }
 
 pub type ScanError = (TokenPosition, String);
 
-pub fn get_errors(tokens: &[(TokenPosition, Token)]) -> Vec<ScanError> {
+fn get_errors(tokens: &[(TokenPosition, Token)]) -> Vec<ScanError> {
     let mut errors = Vec::new();
 
     for tok in tokens {
@@ -246,7 +257,7 @@ mod tests {
                 }
                 let file = File::open(file_path).expect("Unable to open file");
 
-                let tokens = tokenize(file).pop().expect("Missing token in file");
+                let tokens = tokenize(file).expect("Errors scanning string").pop().expect("Missing token in file");
                 assert_eq!(
                     tokens,
                     (TokenPosition { line: 0, symbol: 0 }, $result_token)
@@ -269,7 +280,7 @@ mod tests {
         test_token!(
             "string",
             "\"$string!\"",
-            Token::String("\"$string!\"".to_string())
+            Token::String("$string!".to_string())
         );
         test_token!("right_arrow", "->", Token::RightArrow);
         test_token!("true", "true", Token::Truthy(true));
@@ -319,7 +330,7 @@ mod tests {
             }
             let file = File::open(file_path).expect("Unable to open file");
 
-            let left_tokens = tokenize(file);
+            let left_tokens = tokenize(file).expect("Errors scanning string");
             let right_tokens = vec!($((TokenPosition{line: $line, symbol: $sym}, $res) ,)*);
             println!("{:?}", left_tokens);
             assert_eq!(left_tokens.len(),right_tokens.len());
@@ -384,17 +395,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn error() {
-        test_scanner!(
-            "error",
-            "foo¤bar",
-            (0, 0, Token::Name("foo".to_string())),
-            (0, 3, Token::Error("¤".to_string())),
-            (0, 5, Token::Name("bar".to_string())),
-        );
-    }
-
     macro_rules! test_scanner_error {
         ($name: expr, $str_token: expr, $(($line: expr, $sym: expr, $error: expr),)*) => {
             let dir = TempDir::new("scanner_test").unwrap();
@@ -406,10 +406,8 @@ mod tests {
             }
             let file = File::open(file_path).expect("Unable to open file");
 
-            let tokens = tokenize(file);
-            let left_errors = get_errors(&tokens);
+            let left_errors = tokenize(file).unwrap_err();
             let right_errors = vec!($((TokenPosition{line: $line, symbol: $sym}, $error ),)*);
-            println!("{:?}", tokens);
             assert_eq!(left_errors, right_errors);
         }
     }
