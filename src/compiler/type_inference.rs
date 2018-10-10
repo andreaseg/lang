@@ -1,4 +1,6 @@
-
+pub fn resolve_types(ast: &mut ast::S) {
+    unimplemented!()
+}
 
 #[cfg(test)]
 mod tests {

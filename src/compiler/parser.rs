@@ -38,8 +38,8 @@ mod ast {
 
     #[derive(PartialEq, Debug, Clone)]
     pub enum Top {
-        Assign(Box<Assignment>), // type a = b
-        Module(Module, Box<S>),  // name::{...}
+        Assign(Assignment),     // type a = b
+        Module(Module, Box<S>), // name::{...}
         Error(ParseError),
     }
 
@@ -48,7 +48,7 @@ mod ast {
         Function(
             terminal::Constness, // const | mut | None
             Symbol,              // name
-            Vec<Box<Symbol>>,    // (x, y, ...)
+            Vec<Symbol>,         // (x, y, ...)
             Box<Statement>,      // = {...} | = ... ;
         ),
         Field(
@@ -152,6 +152,7 @@ mod ast {
         pub enum UnaryOperator {
             Identity,
             Neg,
+            Minus,
             Increment,
             Decrement,
         }
@@ -179,6 +180,9 @@ pub enum Type {
     Tuple(Vec<Box<Type>>),
     Declaration(String),
     Undefined,
+    Struct,
+    Enum,
+    EnumMember,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -191,8 +195,7 @@ pub type Module = String;
 
 pub fn parse(mut tokens: Vec<(TokenPosition, Token)>) -> Result<ast::S, Vec<ast::ParseError>> {
     tokens.reverse();
-    let mut ast = parse_s(&mut tokens);
-    resolve_types(&mut ast);
+    let ast = parse_s(&mut tokens);
     let errors = get_errors(&ast);
     if !errors.is_empty() {
         return Err(errors);
@@ -202,19 +205,302 @@ pub fn parse(mut tokens: Vec<(TokenPosition, Token)>) -> Result<ast::S, Vec<ast:
 
 type Tokens = Vec<(TokenPosition, Token)>;
 
+macro_rules! expect_tokens {
+    ($tokens: ident, $error_type: path, $error_message: expr, $(($type: pat => $result: expr),)*) => {
+        match $tokens.pop() {
+            Some(val) => match val {
+                $((_, $type) => $result,)*
+                other => {
+                    use $error_type as path;
+                    return path::Error(ast::ParseError::UnexpectedToken(
+                        other,
+                        $error_message.to_string(),
+                    ))
+                }
+            },
+            None => {
+                use $error_type as path;
+                return path::Error(ast::ParseError::UnexpectedEOF)
+            },
+        };
+    }
+}
+
 fn parse_s(tokens: &mut Tokens) -> ast::S {
-    unimplemented!()
+    let mut code: Vec<ast::Top> = Vec::new();
+    while !tokens.is_empty() {
+        code.push(parse_top(tokens));
+    }
+    ast::S { code }
 }
 
 fn parse_top(tokens: &mut Tokens) -> ast::Top {
-    unimplemented!()
+    let token = match tokens.pop() {
+        Some(val) => val,
+        None => return ast::Top::Error(ast::ParseError::UnexpectedEOF),
+    };
+
+    match token {
+        (_, Token::Module(name)) => {
+            expect_tokens!(tokens, self::ast::Top, "Expected {",
+                (Token::LeftCurl => {}),);
+
+            let s = parse_s(tokens);
+
+            expect_tokens!(tokens, self::ast::Top, "Expected }",
+                (Token::RightCurl => {}),);
+
+            ast::Top::Module(name, Box::new(s))
+        }
+        other => {
+            tokens.push(other);
+            ast::Top::Assign(parse_assignment(tokens))
+        }
+    }
 }
 
 fn parse_assignment(tokens: &mut Tokens) -> ast::Assignment {
+    let mut token = match tokens.pop() {
+        Some(val) => val,
+        None => return ast::Assignment::Error(ast::ParseError::UnexpectedEOF),
+    };
+
+    let constness = match token {
+        (_, Token::Const) => ast::terminal::Constness::Const,
+        (_, Token::Mut) => ast::terminal::Constness::Mut,
+        _ => {
+            tokens.push(token);
+            ast::terminal::Constness::None
+        }
+    };
+
+    token = match tokens.pop() {
+        Some(val) => val,
+        None => return ast::Assignment::Error(ast::ParseError::UnexpectedEOF),
+    };
+
+    let ty = match token {
+        (_, Token::LeftPar) => {
+            let sign = parse_signature(tokens);
+            let token = match tokens.pop() {
+                Some(val) => val,
+                None => return ast::Assignment::Error(ast::ParseError::UnexpectedEOF),
+            };
+            match token {
+                (_, Token::RightPar) => Some(sign),
+                other => {
+                    return ast::Assignment::Error(ast::ParseError::UnexpectedToken(
+                        other,
+                        "Expected end of type signature".to_string(),
+                    ))
+                }
+            }
+        }
+        _ => {
+            tokens.push(token);
+            None
+        }
+    };
+
+    token = match tokens.pop() {
+        Some(val) => val,
+        None => return ast::Assignment::Error(ast::ParseError::UnexpectedEOF),
+    };
+
+    if ty.is_some() {
+        match token {
+            (_, Token::Function(name)) => {
+                parse_function_assignment(tokens, constness, name, ty.unwrap())
+            }
+            (_, Token::Name(name)) => parse_field_assignment(tokens, constness, name, ty.unwrap()),
+            other => ast::Assignment::Error(ast::ParseError::UnexpectedToken(
+                other,
+                "Expected declaration".to_string(),
+            )),
+        }
+    } else {
+        match token {
+            (_, Token::Name(name)) | (_, Token::Function(name)) => parse_reassignment(tokens, name),
+            (_, Token::Struct) => parse_struct_assignment(tokens),
+            (_, Token::Enum) => parse_enum_assignment(tokens),
+            other => ast::Assignment::Error(ast::ParseError::UnexpectedToken(
+                other,
+                "Expected struct, enum, or reassignment".to_string(),
+            )),
+        }
+    }
+}
+
+fn parse_function_assignment(
+    tokens: &mut Tokens,
+    constness: ast::terminal::Constness,
+    name: String,
+    ty: Type,
+) -> ast::Assignment {
+    expect_tokens!(tokens, self::ast::Assignment, "Expected (",
+                (Token::LeftPar => {}),);
+
+    let mut params = Vec::new();
+
+    loop {
+        expect_tokens!(tokens, self::ast::Assignment, "Expected {",
+                    (Token::Comma => continue),
+                    (Token::RightPar => break),
+                    (Token::Name(name) => params.push(Symbol {name, ty: Type::Undefined})),
+                    );
+    }
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+                (Token::Assign => {}),);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected {",
+                (Token::LeftCurl => {}),);
+
+    let stmt = parse_statement(tokens);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected }",
+                (Token::RightCurl => {}),);
+
+    ast::Assignment::Function(constness, Symbol { name, ty }, params, Box::new(stmt))
+}
+
+fn parse_field_assignment(
+    tokens: &mut Tokens,
+    constness: ast::terminal::Constness,
+    name: String,
+    ty: Type,
+) -> ast::Assignment {
+    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+                (Token::Assign => {}),);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected {",
+                (Token::LeftCurl => {}),);
+
+    let stmt = parse_statement(tokens);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected }",
+                (Token::RightCurl => {}),);
+
+    ast::Assignment::Field(constness, Symbol { name, ty }, Box::new(stmt))
+}
+
+fn parse_struct_assignment(tokens: &mut Tokens) -> ast::Assignment {
+    let name = expect_tokens!(tokens, 
+                    self::ast::Assignment, "Expected struct name",
+                    (Token::Name(name) => name.to_string()),);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+                (Token::Assign => {}),);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected {",
+                (Token::LeftCurl => {}),);
+
+    let struct_body = parse_top(tokens);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected }",
+                (Token::RightCurl => {}),);
+
+    ast::Assignment::Struct(
+        Symbol {
+            name,
+            ty: Type::Struct,
+        },
+        Box::new(struct_body),
+    )
+}
+
+fn parse_enum_assignment(tokens: &mut Tokens) -> ast::Assignment {
+    let name = expect_tokens!(tokens, 
+                    self::ast::Assignment, "Expected enum name",
+                    (Token::Name(name) => name.to_string()),);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+                (Token::Assign => {}),);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected {",
+                (Token::LeftCurl => {}),);
+
+    let symbols = match parse_enum_symbols(tokens) {
+        Ok(ok) => ok,
+        Err(e) => return ast::Assignment::Error(e),
+    };
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected }",
+                (Token::RightCurl => {}),);
+
+    ast::Assignment::Enum(
+        Symbol {
+            name,
+            ty: Type::Enum,
+        },
+        symbols,
+    )
+}
+
+fn parse_reassignment(tokens: &mut Tokens, name: String) -> ast::Assignment {
+    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+                (Token::Assign => {}),);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected {",
+                (Token::LeftCurl => {}),);
+
+    let stmt = parse_statement(tokens);
+
+    expect_tokens!(tokens, self::ast::Assignment, "Expected }",
+                (Token::RightCurl => {}),);
+
+    ast::Assignment::Reassign(
+        Symbol {
+            name,
+            ty: Type::Undefined,
+        },
+        Box::new(stmt),
+    )
+}
+
+fn parse_enum_symbols(tokens: &mut Tokens) -> Result<Vec<Box<Symbol>>, ast::ParseError> {
+    let mut symbols = Vec::new();
+
+    loop {
+        let token = match tokens.pop() {
+            Some(val) => val,
+            None => return Err(ast::ParseError::UnexpectedEOF),
+        };
+
+        match token {
+            (_, Token::Comma) => continue,
+            (_, Token::RightCurl) => {
+                tokens.push(token);
+                break;
+            }
+            (_, Token::Name(name)) => symbols.push(Box::new(Symbol {
+                name,
+                ty: Type::EnumMember,
+            })),
+            other => {
+                return Err(ast::ParseError::UnexpectedToken(
+                    other,
+                    "Expected enum entry".to_string(),
+                ))
+            }
+        }
+    }
+
+    Ok(symbols)
+}
+
+fn parse_signature(tokens: &mut Tokens) -> Type {
+    // TODO
     unimplemented!()
 }
 
 fn parse_statement(tokens: &mut Tokens) -> ast::Statement {
+    let token = match tokens.pop() {
+        Some(val) => val,
+        None => return ast::Statement::Error(ast::ParseError::UnexpectedEOF),
+    };
+
+    // TODO
     unimplemented!()
 }
 
@@ -301,7 +587,7 @@ fn parse_unary_expr(tokens: &mut Tokens) -> ast::Expression {
     match token {
         (_, Token::Operator(op)) => match op.as_ref() {
             "-" => ast::Expression::Unary(
-                ast::terminal::UnaryOperator::Neg,
+                ast::terminal::UnaryOperator::Minus,
                 Box::new(parse_primary_expr(tokens)),
             ),
             "~" => ast::Expression::Unary(
@@ -458,10 +744,6 @@ fn parse_function_call(tokens: &mut Tokens) -> ast::FunctionCall {
     }
 
     ast::FunctionCall::Function(symbol, args)
-}
-
-fn resolve_types(ast: &mut ast::S) {
-    unimplemented!()
 }
 
 fn get_errors(ast: &ast::S) -> Vec<ast::ParseError> {
@@ -719,15 +1001,43 @@ mod tests {
             ast::Expression::Binary(
                 ast::terminal::Operator::And,
                 Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
-                    Symbol {name: "foo".to_string(), ty: Type::Undefined}, None
+                    Symbol {
+                        name: "foo".to_string(),
+                        ty: Type::Undefined
+                    },
+                    None
                 )))),
                 Box::new(ast::Expression::Primary(Box::new(ast::Binding::Function(
                     ast::FunctionCall::Function(
-                        Symbol {name: "bar".to_string(), ty: Type::Undefined}, vec![]
-                    ), None
+                        Symbol {
+                            name: "bar".to_string(),
+                            ty: Type::Undefined
+                        },
+                        vec![]
+                    ),
+                    None
                 ))))
             )
         )
+    }
+
+    #[test]
+    fn expr_incr() {
+        let mut tokens = generate_test_tokens("add", "foo++");
+        let ast = parse_expression(&mut tokens);
+        assert_eq!(
+            ast,
+            ast::Expression::Unary(
+                ast::terminal::UnaryOperator::Increment,
+                Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                    Symbol {
+                        name: "foo".to_string(),
+                        ty: Type::Undefined
+                    },
+                    None
+                )))),
+            )
+        );
     }
 
 }
