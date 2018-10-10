@@ -54,6 +54,7 @@ pub enum Token {
     Struct,
     Enum,
     End,
+    Return,
 }
 
 macro_rules! make_regex {
@@ -82,6 +83,7 @@ make_regex!(
     (False, r"(?P<false>false)|"),
     (If, r"(?P<if>if)|"),
     (Else, r"(?P<else>else)|"),
+    (Return, r"(?P<else>else)|"),
     (Match, r"(?P<match>match)|"),
     (Const, r"(?P<const>const)|"),
     (Mut, r"(?P<mut>mut)|"),
@@ -202,6 +204,7 @@ pub fn tokenize(file: File) -> Result<Vec<(TokenPosition, Token)>, Vec<ScanError
                 Re::Operator => ret_tok!(Token::Operator(cap.as_str().to_string())),
                 Re::Assign => ret_tok!(Token::Assign),
                 Re::String => ret_tok!(Token::String(trunc_cap(&cap, 1, 1))),
+                Re::Return => ret_tok!(Token::Return),
                 Re::Whitespace => {
                     continue;
                 }
