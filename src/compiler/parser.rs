@@ -76,6 +76,7 @@ mod ast {
             Option<Vec<Statement>>,                 // Else
         ),
         Match(
+            Symbol,
             Vec<(Symbol, Vec<Statement>)>,
             Option<Vec<Statement>>, /* _ => stmt */
         ),
@@ -277,6 +278,31 @@ fn parse_top(tokens: &mut Tokens) -> ast::Top {
     }
 }
 
+fn peek_assign(tokens: &mut Tokens) -> Result<bool, ast::ParseError> {
+    let l1 = match tokens.pop() {
+        Some(val) => val,
+        None => return Err(ast::ParseError::UnexpectedEOF),
+    };
+
+    let l2 = match tokens.pop() {
+        Some(val) => val,
+        None => return Err(ast::ParseError::UnexpectedEOF),
+    };
+
+    match l2 {
+        (_, Token::Assign) => {
+            tokens.push(l2);
+            tokens.push(l1);
+            Ok(true)
+        }
+        _ => {
+            tokens.push(l2);
+            tokens.push(l1);
+            Ok(false)
+        }
+    }
+}
+
 fn parse_assignment(tokens: &mut Tokens) -> ast::Assignment {
     let token = match tokens.pop() {
         Some(val) => val,
@@ -292,35 +318,18 @@ fn parse_assignment(tokens: &mut Tokens) -> ast::Assignment {
         }
     };
 
-    let token = match tokens.pop() {
-        Some(val) => val,
-        None => return ast::Assignment::Error(ast::ParseError::UnexpectedEOF),
+    let has_type = match peek_assign(tokens) {
+        Ok(ok) => !ok,
+        Err(e) => return ast::Assignment::Error(e),
     };
 
-    let ty = match token {
-        (_, Token::LeftPar) => {
-            let sign = match parse_signature(tokens) {
-                Ok(ok) => ok,
-                Err(e) => return ast::Assignment::Error(e),
-            };
-            let token = match tokens.pop() {
-                Some(val) => val,
-                None => return ast::Assignment::Error(ast::ParseError::UnexpectedEOF),
-            };
-            match token {
-                (_, Token::RightPar) => Some(sign),
-                other => {
-                    return ast::Assignment::Error(ast::ParseError::UnexpectedToken(
-                        other,
-                        "Expected end of type signature".to_string(),
-                    ))
-                }
-            }
+    let ty = if has_type {
+        match parse_signature(tokens) {
+            Ok(ok) => Some(ok),
+            Err(e) => return ast::Assignment::Error(e),
         }
-        _ => {
-            tokens.push(token);
-            None
-        }
+    } else {
+        None
     };
 
     let token = match tokens.pop() {
@@ -328,7 +337,7 @@ fn parse_assignment(tokens: &mut Tokens) -> ast::Assignment {
         None => return ast::Assignment::Error(ast::ParseError::UnexpectedEOF),
     };
 
-    if ty.is_some() {
+    if has_type {
         match token {
             (_, Token::Function(name)) => {
                 parse_function_assignment(tokens, constness, name, ty.unwrap())
@@ -355,7 +364,7 @@ fn parse_assignment(tokens: &mut Tokens) -> ast::Assignment {
 fn parse_stmt_body(tokens: &mut Tokens) -> Result<Vec<ast::Statement>, ast::ParseError> {
     let token = match tokens.pop() {
         Some(val) => val,
-        None => return Err(ast::ParseError::UnexpectedEOF)
+        None => return Err(ast::ParseError::UnexpectedEOF),
     };
 
     match token {
@@ -367,21 +376,23 @@ fn parse_stmt_body(tokens: &mut Tokens) -> Result<Vec<ast::Statement>, ast::Pars
 
                 let token = match tokens.pop() {
                     Some(val) => val,
-                    None => return Err(ast::ParseError::UnexpectedEOF)
+                    None => return Err(ast::ParseError::UnexpectedEOF),
                 };
-                expect_tokens_or_err!(tokens, "Expected ;",
+                expect_tokens_or_err!(tokens, "Expected ; or }",
                         (Token::End => {}),
                         (Token::RightCurl => break),);
             }
 
             Ok(stmt)
-        },
+        }
         _ => {
             tokens.push(token);
-            Ok(vec![parse_statement(tokens)])
+            let expr = parse_expression(tokens);
+            expect_tokens_or_err!(tokens, "Expected ;",
+                    (Token::End => {}),);
+            Ok(vec![ast::Statement::Return(Box::new(expr))])
         }
     }
-    
 }
 
 fn parse_function_assignment(
@@ -403,7 +414,7 @@ fn parse_function_assignment(
                     );
     }
 
-    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+    expect_tokens!(tokens, self::ast::Assignment, "Expected function assignment (=)",
                 (Token::Assign => {}),);
 
     let stmt = match parse_stmt_body(tokens) {
@@ -420,7 +431,7 @@ fn parse_field_assignment(
     name: String,
     ty: Type,
 ) -> ast::Assignment {
-    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+    expect_tokens!(tokens, self::ast::Assignment, "Expected field assignment (=)",
                 (Token::Assign => {}),);
 
     let stmt = match parse_stmt_body(tokens) {
@@ -436,7 +447,7 @@ fn parse_struct_assignment(tokens: &mut Tokens) -> ast::Assignment {
                     self::ast::Assignment, "Expected enum name",
                     (Token::Name(name) => name.to_string()),);
 
-    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+    expect_tokens!(tokens, self::ast::Assignment, "Expected struct assignment (=)",
                 (Token::Assign => {}),);
 
     expect_tokens!(tokens, self::ast::Assignment, "Expected {",
@@ -464,7 +475,7 @@ fn parse_enum_assignment(tokens: &mut Tokens) -> ast::Assignment {
                     self::ast::Assignment, "Expected enum name",
                     (Token::Name(name) => name.to_string()),);
 
-    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+    expect_tokens!(tokens, self::ast::Assignment, "Expected enum assignment (=)",
                 (Token::Assign => {}),);
 
     expect_tokens!(tokens, self::ast::Assignment, "Expected {",
@@ -488,7 +499,7 @@ fn parse_enum_assignment(tokens: &mut Tokens) -> ast::Assignment {
 }
 
 fn parse_reassignment(tokens: &mut Tokens, name: String) -> ast::Assignment {
-    expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
+    expect_tokens!(tokens, self::ast::Assignment, "Expected reassignment (=)",
                 (Token::Assign => {}),);
 
     let stmt = match parse_stmt_body(tokens) {
@@ -690,26 +701,17 @@ fn parse_statement(tokens: &mut Tokens) -> ast::Statement {
 fn parse_if_statement(tokens: &mut Tokens) -> ast::Statement {
     let condition = parse_expression(tokens);
 
-    expect_tokens!(tokens, self::ast::Statement, "Expected {",
-                (Token::LeftCurl => {}),);
-
-    let mut if_block = Vec::new();
-
-    loop {
-        if_block.push(parse_statement(tokens));
-        expect_tokens!(tokens, self::ast::Statement, "Expected ;",
-                (Token::End => {}),);
-    }
-
-    expect_tokens!(tokens, self::ast::Statement, "Expected }",
-                (Token::RightCurl => {}),);
+    let stmt = match parse_stmt_body(tokens) {
+        Ok(ok) => ok,
+        Err(e) => return ast::Statement::Error(e),
+    };
 
     let mut else_if_blocks = Vec::new();
 
     loop {
         let else_token = match tokens.pop() {
             Some(val) => val,
-            None => return ast::Statement::Error(ast::ParseError::UnexpectedEOF),
+            None => break,
         };
 
         match else_token {
@@ -736,41 +738,54 @@ fn parse_if_statement(tokens: &mut Tokens) -> ast::Statement {
 
         let condition = parse_expression(tokens);
 
-
         let stmt = match parse_stmt_body(tokens) {
             Ok(ok) => ok,
             Err(e) => return ast::Statement::Error(e),
         };
 
-
         else_if_blocks.push((Box::new(condition), stmt));
     }
 
-    let else_token = match tokens.pop() {
+    let else_block = match tokens.pop() {
+        Some(token) => match token {
+            (_, Token::Else) => {
+                let stmt = match parse_stmt_body(tokens) {
+                    Ok(ok) => ok,
+                    Err(e) => return ast::Statement::Error(e),
+                };
+
+                Some(stmt)
+            }
+            _ => {
+                tokens.push(token);
+                None
+            }
+        },
+        None => None,
+    };
+
+    ast::Statement::If(Box::new(condition), stmt, else_if_blocks, else_block)
+}
+
+fn parse_match_statement(tokens: &mut Tokens) -> ast::Statement {
+    let token = match tokens.pop() {
         Some(val) => val,
         None => return ast::Statement::Error(ast::ParseError::UnexpectedEOF),
     };
 
-    let else_block = match else_token {
-        (_, Token::Else) => {
-
-            let stmt = match parse_stmt_body(tokens) {
-                Ok(ok) => ok,
-                Err(e) => return ast::Statement::Error(e),
-            };
-
-            Some(stmt)
-        }
+    let symbol = match token {
+        (_, Token::Name(name)) => Symbol {
+            name,
+            ty: Type::Undefined,
+        },
         _ => {
-            tokens.push(else_token);
-            None
+            return ast::Statement::Error(ast::ParseError::UnexpectedToken(
+                token,
+                "Expected match name".to_string(),
+            ))
         }
     };
 
-    ast::Statement::If(Box::new(condition), if_block, else_if_blocks, else_block)
-}
-
-fn parse_match_statement(tokens: &mut Tokens) -> ast::Statement {
     expect_tokens!(tokens, self::ast::Statement, "Expected {",
                 (Token::LeftCurl => {}),);
 
@@ -785,6 +800,8 @@ fn parse_match_statement(tokens: &mut Tokens) -> ast::Statement {
 
         match token {
             (_, Token::Wildcard) => {
+                expect_tokens!(tokens, self::ast::Statement, "Expected =>",
+                        (Token::FatRightArrow => {}),);
                 let stmt = match parse_stmt_body(tokens) {
                     Ok(ok) => ok,
                     Err(e) => return ast::Statement::Error(e),
@@ -817,7 +834,7 @@ fn parse_match_statement(tokens: &mut Tokens) -> ast::Statement {
         }
     }
 
-    ast::Statement::Match(arms, wildcard_arm)
+    ast::Statement::Match(symbol, arms, wildcard_arm)
 }
 
 fn parse_call_statement(tokens: &mut Tokens) -> ast::Statement {
@@ -1379,5 +1396,341 @@ mod tests {
             )
         );
     }
+
+    #[test]
+    fn stmt_assign() {
+        let mut tokens = generate_test_tokens("stmt_assign", "int foo = bar;");
+        let ast = parse_statement(&mut tokens);
+        assert_eq!(
+            ast,
+            ast::Statement::Assign(Box::new(ast::Assignment::Field(
+                ast::terminal::Constness::None,
+                Symbol {
+                    name: "foo".to_string(),
+                    ty: Type::Int
+                },
+                vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+                    Box::new(ast::Binding::Field(
+                        Symbol {
+                            name: "bar".to_string(),
+                            ty: Type::Undefined
+                        },
+                        None
+                    ))
+                )))]
+            )))
+        );
+    }
+
+    #[test]
+    fn stmt_call() {
+        let mut tokens = generate_test_tokens("stmt_call", "foo(bar, baz);");
+        let ast = parse_statement(&mut tokens);
+        assert_eq!(
+            ast,
+            ast::Statement::Call(Box::new(ast::FunctionCall::Function(
+                Symbol {
+                    name: "foo".to_string(),
+                    ty: Type::Undefined
+                },
+                vec![
+                    Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                        Symbol {
+                            name: "bar".to_string(),
+                            ty: Type::Undefined
+                        },
+                        None
+                    )))),
+                    Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                        Symbol {
+                            name: "baz".to_string(),
+                            ty: Type::Undefined
+                        },
+                        None
+                    ))))
+                ]
+            )))
+        );
+    }
+
+    #[test]
+    fn stmt_if() {
+        let mut tokens = generate_test_tokens("stmt_if", "if a==b {foo();}");
+        let ast = parse_statement(&mut tokens);
+
+        let cmp = ast::Expression::Binary(
+            ast::terminal::Operator::Equal,
+            Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                Symbol {
+                    name: "a".to_string(),
+                    ty: Type::Undefined,
+                },
+                None,
+            )))),
+            Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                Symbol {
+                    name: "b".to_string(),
+                    ty: Type::Undefined,
+                },
+                None,
+            )))),
+        );
+
+        let stmt = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
+            Symbol {
+                name: "foo".to_string(),
+                ty: Type::Undefined,
+            },
+            vec![],
+        )));
+
+        assert_eq!(
+            ast,
+            ast::Statement::If(Box::new(cmp), vec![stmt], vec![], None)
+        );
+    }
+
+    #[test]
+    fn stmt_if_else() {
+        let mut tokens = generate_test_tokens("stmt_if_else", "if a==b {foo();} else {bar();}");
+        let ast = parse_statement(&mut tokens);
+
+        let cmp = ast::Expression::Binary(
+            ast::terminal::Operator::Equal,
+            Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                Symbol {
+                    name: "a".to_string(),
+                    ty: Type::Undefined,
+                },
+                None,
+            )))),
+            Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                Symbol {
+                    name: "b".to_string(),
+                    ty: Type::Undefined,
+                },
+                None,
+            )))),
+        );
+
+        let stmt = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
+            Symbol {
+                name: "foo".to_string(),
+                ty: Type::Undefined,
+            },
+            vec![],
+        )));
+
+        let stmt2 = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
+            Symbol {
+                name: "bar".to_string(),
+                ty: Type::Undefined,
+            },
+            vec![],
+        )));
+
+        assert_eq!(
+            ast,
+            ast::Statement::If(Box::new(cmp), vec![stmt], vec![], Some(vec![stmt2]))
+        );
+    }
+
+    #[test]
+    fn stmt_if_else_if() {
+        let mut tokens = generate_test_tokens(
+            "stmt_if_else_if",
+            "if a==b {foo();} else if c+d>0 {bar();} else {baz();}",
+        );
+        let ast = parse_statement(&mut tokens);
+
+        let cmp = ast::Expression::Binary(
+            ast::terminal::Operator::Equal,
+            Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                Symbol {
+                    name: "a".to_string(),
+                    ty: Type::Undefined,
+                },
+                None,
+            )))),
+            Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                Symbol {
+                    name: "b".to_string(),
+                    ty: Type::Undefined,
+                },
+                None,
+            )))),
+        );
+
+        let stmt = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
+            Symbol {
+                name: "foo".to_string(),
+                ty: Type::Undefined,
+            },
+            vec![],
+        )));
+
+        let cmp2 = ast::Expression::Binary(
+            ast::terminal::Operator::Greater,
+            Box::new(ast::Expression::Binary(
+                ast::terminal::Operator::Add,
+                Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                    Symbol {
+                        name: "a".to_string(),
+                        ty: Type::Undefined,
+                    },
+                    None,
+                )))),
+                Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
+                    Symbol {
+                        name: "b".to_string(),
+                        ty: Type::Undefined,
+                    },
+                    None,
+                )))),
+            )),
+            Box::new(ast::Expression::Primary(Box::new(ast::Binding::Literal(
+                Box::new(ast::terminal::Literal::Integer(0)),
+            )))),
+        );
+
+        let stmt2 = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
+            Symbol {
+                name: "bar".to_string(),
+                ty: Type::Undefined,
+            },
+            vec![],
+        )));
+
+        let stmt3 = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
+            Symbol {
+                name: "baz".to_string(),
+                ty: Type::Undefined,
+            },
+            vec![],
+        )));
+
+        assert_eq!(
+            ast,
+            ast::Statement::If(
+                Box::new(cmp),
+                vec![stmt],
+                vec![(Box::new(cmp2), vec![stmt2])],
+                Some(vec![stmt3])
+            )
+        );
+    }
+
+    #[test]
+    fn stmt_match() {
+        let mut tokens = generate_test_tokens(
+            "stmt_match",
+            "match foo {bar => {a = 1} baz => {a = 2} _ => {a = 0}}",
+        );
+        let ast = parse_statement(&mut tokens);
+
+        let mut stmt = vec![1, 2, 3].into_iter().map(|value| {
+            ast::Statement::Assign(Box::new(ast::Assignment::Reassign(
+                Symbol {
+                    name: "a".to_string(),
+                    ty: Type::Undefined,
+                },
+                vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+                    Box::new(ast::Binding::Literal(Box::new(
+                        ast::terminal::Literal::Integer(value),
+                    ))),
+                )))],
+            )))
+        });
+
+        assert_eq!(
+            ast,
+            ast::Statement::Match(
+                Symbol {
+                    name: "foo".to_string(),
+                    ty: Type::Undefined
+                },
+                vec![
+                    (
+                        Symbol {
+                            name: "bar".to_string(),
+                            ty: Type::Undefined
+                        },
+                        vec![stmt.next().unwrap()]
+                    ),
+                    (
+                        Symbol {
+                            name: "bar".to_string(),
+                            ty: Type::Undefined
+                        },
+                        vec![stmt.next().unwrap()]
+                    )
+                ],
+                Some(vec![stmt.next().unwrap()])
+            )
+        )
+    }
+
+    #[test]
+    fn stmt_return() {
+        let mut tokens = generate_test_tokens("stmt_return", "return foo;");
+        let ast = parse_statement(&mut tokens);
+
+        assert_eq!(
+            ast,
+            ast::Statement::Return(Box::new(ast::Expression::Primary(Box::new(
+                ast::Binding::Field(
+                    Symbol {
+                        name: "foo".to_string(),
+                        ty: Type::Undefined
+                    },
+                    None
+                )
+            ))))
+        );
+    }
+
+    #[test]
+    fn assign_field() {
+        let mut tokens = generate_test_tokens("assign_field", "mut int foo = 1");
+        let ast = parse_assignment(&mut tokens);
+
+        assert_eq!(
+            ast,
+            ast::Assignment::Field(
+                ast::terminal::Constness::Mut,
+                Symbol {
+                    name: "foo".to_string(),
+                    ty: Type::Int
+                },
+                vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+                    Box::new(ast::Binding::Literal(Box::new(
+                        ast::terminal::Literal::Integer(1)
+                    )))
+                )))]
+            )
+        );
+    }
+
+    #[test]
+    fn reassign_field() {
+        let mut tokens = generate_test_tokens("reassign_field", "foo = 1");
+        let ast = parse_assignment(&mut tokens);
+
+        assert_eq!(
+            ast,
+            ast::Assignment::Reassign(
+                Symbol {
+                    name: "foo".to_string(),
+                    ty: Type::Undefined
+                },
+                vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+                    Box::new(ast::Binding::Literal(Box::new(
+                        ast::terminal::Literal::Integer(1)
+                    )))
+                )))]
+            )
+        );
+    }
+
 
 }
