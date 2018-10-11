@@ -374,13 +374,15 @@ fn parse_stmt_body(tokens: &mut Tokens) -> Result<Vec<ast::Statement>, ast::Pars
             loop {
                 stmt.push(parse_statement(tokens));
 
-                let token = match tokens.pop() {
-                    Some(val) => val,
-                    None => return Err(ast::ParseError::UnexpectedEOF),
-                };
-                expect_tokens_or_err!(tokens, "Expected ; or }",
-                        (Token::End => {}),
-                        (Token::RightCurl => break),);
+                match tokens.pop() {
+                    Some(token) => {
+                        match token {
+                            (_, Token::RightCurl) => break,
+                            _ => tokens.push(token)
+                        }
+                    },
+                    None => return Err(ast::ParseError::UnexpectedEOF)
+                }
             }
 
             Ok(stmt)
@@ -838,7 +840,10 @@ fn parse_match_statement(tokens: &mut Tokens) -> ast::Statement {
 }
 
 fn parse_call_statement(tokens: &mut Tokens) -> ast::Statement {
-    ast::Statement::Call(Box::new(parse_function_call(tokens)))
+    let call = parse_function_call(tokens);
+    expect_tokens!(tokens, self::ast::Statement, "Expected ;",
+        (Token::End => {}),);
+    ast::Statement::Call(Box::new(call))
 }
 
 /// Precedence order is C order: https://en.cppreference.com/w/c/language/operator_precedence
@@ -1624,7 +1629,7 @@ mod tests {
     fn stmt_match() {
         let mut tokens = generate_test_tokens(
             "stmt_match",
-            "match foo {bar => {a = 1} baz => {a = 2} _ => {a = 0}}",
+            "match foo {bar => {a = 1;} baz => {a = 2;} _ => {a = 3;}}",
         );
         let ast = parse_statement(&mut tokens);
 
@@ -1659,7 +1664,7 @@ mod tests {
                     ),
                     (
                         Symbol {
-                            name: "bar".to_string(),
+                            name: "baz".to_string(),
                             ty: Type::Undefined
                         },
                         vec![stmt.next().unwrap()]
