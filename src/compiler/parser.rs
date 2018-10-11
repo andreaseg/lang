@@ -353,15 +353,35 @@ fn parse_assignment(tokens: &mut Tokens) -> ast::Assignment {
 }
 
 fn parse_stmt_body(tokens: &mut Tokens) -> Result<Vec<ast::Statement>, ast::ParseError> {
-    let mut stmt = Vec::new();
+    let token = match tokens.pop() {
+        Some(val) => val,
+        None => return Err(ast::ParseError::UnexpectedEOF)
+    };
 
-    loop {
-        stmt.push(parse_statement(tokens));
-        expect_tokens_or_err!(tokens, "Expected ;",
-                (Token::End => break),);
+    match token {
+        (_, Token::LeftCurl) => {
+            let mut stmt = Vec::new();
+
+            loop {
+                stmt.push(parse_statement(tokens));
+
+                let token = match tokens.pop() {
+                    Some(val) => val,
+                    None => return Err(ast::ParseError::UnexpectedEOF)
+                };
+                expect_tokens_or_err!(tokens, "Expected ;",
+                        (Token::End => {}),
+                        (Token::RightCurl => break),);
+            }
+
+            Ok(stmt)
+        },
+        _ => {
+            tokens.push(token);
+            Ok(vec![parse_statement(tokens)])
+        }
     }
-
-    Ok(stmt)
+    
 }
 
 fn parse_function_assignment(
@@ -386,16 +406,10 @@ fn parse_function_assignment(
     expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
                 (Token::Assign => {}),);
 
-    expect_tokens!(tokens, self::ast::Assignment, "Expected {",
-                (Token::LeftCurl => {}),);
-
     let stmt = match parse_stmt_body(tokens) {
         Ok(ok) => ok,
-        Err(e) => return ast::Assignment::Error(e)
+        Err(e) => return ast::Assignment::Error(e),
     };
-
-    expect_tokens!(tokens, self::ast::Assignment, "Expected }",
-                (Token::RightCurl => {}),);
 
     ast::Assignment::Function(constness, Symbol { name, ty }, params, stmt)
 }
@@ -409,16 +423,10 @@ fn parse_field_assignment(
     expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
                 (Token::Assign => {}),);
 
-    expect_tokens!(tokens, self::ast::Assignment, "Expected {",
-                (Token::LeftCurl => {}),);
-
     let stmt = match parse_stmt_body(tokens) {
         Ok(ok) => ok,
-        Err(e) => return ast::Assignment::Error(e)
+        Err(e) => return ast::Assignment::Error(e),
     };
-
-    expect_tokens!(tokens, self::ast::Assignment, "Expected }",
-                (Token::RightCurl => {}),);
 
     ast::Assignment::Field(constness, Symbol { name, ty }, stmt)
 }
@@ -483,16 +491,10 @@ fn parse_reassignment(tokens: &mut Tokens, name: String) -> ast::Assignment {
     expect_tokens!(tokens, self::ast::Assignment, "Expected assignment (=)",
                 (Token::Assign => {}),);
 
-    expect_tokens!(tokens, self::ast::Assignment, "Expected {",
-                (Token::LeftCurl => {}),);
-
     let stmt = match parse_stmt_body(tokens) {
         Ok(ok) => ok,
-        Err(e) => return ast::Assignment::Error(e)
+        Err(e) => return ast::Assignment::Error(e),
     };
-
-    expect_tokens!(tokens, self::ast::Assignment, "Expected }",
-                (Token::RightCurl => {}),);
 
     ast::Assignment::Reassign(
         Symbol {
@@ -570,9 +572,8 @@ fn parse_struct_symbols(tokens: &mut Tokens) -> Result<Vec<Box<Symbol>>, ast::Pa
 fn parse_signature(tokens: &mut Tokens) -> Result<Type, ast::ParseError> {
     let token = match tokens.pop() {
         Some(val) => val,
-        None => return Err(ast::ParseError::UnexpectedEOF)
+        None => return Err(ast::ParseError::UnexpectedEOF),
     };
-    
 
     match token {
         (_, Token::LeftPar) => {
@@ -580,12 +581,12 @@ fn parse_signature(tokens: &mut Tokens) -> Result<Type, ast::ParseError> {
 
             match parse_signature(tokens) {
                 Ok(ok) => types.push(ok),
-                Err(e) => return Err(e)
+                Err(e) => return Err(e),
             }
 
             let token = match tokens.pop() {
                 Some(val) => val,
-                None => return Err(ast::ParseError::UnexpectedEOF)
+                None => return Err(ast::ParseError::UnexpectedEOF),
             };
 
             match token {
@@ -593,17 +594,17 @@ fn parse_signature(tokens: &mut Tokens) -> Result<Type, ast::ParseError> {
                     let left = types.remove(0);
                     let right = match parse_signature(tokens) {
                         Ok(ok) => ok,
-                        Err(e) => return Err(e)
+                        Err(e) => return Err(e),
                     };
-                    return Ok(Type::Function(Box::new(left), Box::new(right)))
-                },
-                _ => tokens.push(token)
+                    return Ok(Type::Function(Box::new(left), Box::new(right)));
+                }
+                _ => tokens.push(token),
             }
 
             loop {
                 let token = match tokens.pop() {
                     Some(val) => val,
-                    None => return Err(ast::ParseError::UnexpectedEOF)
+                    None => return Err(ast::ParseError::UnexpectedEOF),
                 };
                 match token {
                     (_, Token::Comma) => continue,
@@ -612,57 +613,55 @@ fn parse_signature(tokens: &mut Tokens) -> Result<Type, ast::ParseError> {
                         tokens.push(token);
                         match parse_signature(tokens) {
                             Ok(ok) => types.push(ok),
-                            Err(e) => return Err(e)
+                            Err(e) => return Err(e),
                         }
                     }
                 }
             }
             Ok(Type::Tuple(types))
-        },
-        (_, Token::Name(name)) => {
-            match name.as_ref() {
-                "int" => Ok(Type::Int),
-                "float" => Ok(Type::Float),
-                "uint" => Ok(Type::Uint),
-                "bool" => Ok(Type::Bool),
-                "string" => Ok(Type::String),
-                "v1" => Ok(Type::V1),
-                "v2" => Ok(Type::V2),
-                "v4" => Ok(Type::V4),
-                "v8" => Ok(Type::V8),
-                "v16" => Ok(Type::V16),
-                "v32" => Ok(Type::V32),
-                "v64" => Ok(Type::V64),
-                other => Ok(Type::Declaration(other.to_string()))
-
-            }
-        },
-        (_, Token::Function(name)) => {
-            match name.as_ref() {
-                "ptr" => {
-                    let t = match parse_signature(tokens) {
-                            Ok(ok) => ok,
-                            Err(e) => return Err(e)
-                        };
-                    Ok(Type::Ptr(Box::new(t)))
-                },
-                "list" => {
-                    let t = match parse_signature(tokens) {
-                            Ok(ok) => ok,
-                            Err(e) => return Err(e)
-                        };
-                    Ok(Type::List(Box::new(t)))
-                },
-                other => {
-                    let t = match parse_signature(tokens) {
-                            Ok(ok) => ok,
-                            Err(e) => return Err(e)
-                        };
-                    Ok(Type::Generic(other.to_string(), Box::new(t)))
-                }
-            }
         }
-        other => Err(ast::ParseError::UnexpectedToken(other, "Expected type signature".to_string()))
+        (_, Token::Name(name)) => match name.as_ref() {
+            "int" => Ok(Type::Int),
+            "float" => Ok(Type::Float),
+            "uint" => Ok(Type::Uint),
+            "bool" => Ok(Type::Bool),
+            "string" => Ok(Type::String),
+            "v1" => Ok(Type::V1),
+            "v2" => Ok(Type::V2),
+            "v4" => Ok(Type::V4),
+            "v8" => Ok(Type::V8),
+            "v16" => Ok(Type::V16),
+            "v32" => Ok(Type::V32),
+            "v64" => Ok(Type::V64),
+            other => Ok(Type::Declaration(other.to_string())),
+        },
+        (_, Token::Function(name)) => match name.as_ref() {
+            "ptr" => {
+                let t = match parse_signature(tokens) {
+                    Ok(ok) => ok,
+                    Err(e) => return Err(e),
+                };
+                Ok(Type::Ptr(Box::new(t)))
+            }
+            "list" => {
+                let t = match parse_signature(tokens) {
+                    Ok(ok) => ok,
+                    Err(e) => return Err(e),
+                };
+                Ok(Type::List(Box::new(t)))
+            }
+            other => {
+                let t = match parse_signature(tokens) {
+                    Ok(ok) => ok,
+                    Err(e) => return Err(e),
+                };
+                Ok(Type::Generic(other.to_string(), Box::new(t)))
+            }
+        },
+        other => Err(ast::ParseError::UnexpectedToken(
+            other,
+            "Expected type signature".to_string(),
+        )),
     }
 }
 
@@ -737,16 +736,12 @@ fn parse_if_statement(tokens: &mut Tokens) -> ast::Statement {
 
         let condition = parse_expression(tokens);
 
-        expect_tokens!(tokens, self::ast::Statement, "Expected {",
-                (Token::LeftCurl => {}),);
 
         let stmt = match parse_stmt_body(tokens) {
             Ok(ok) => ok,
-            Err(e) => return ast::Statement::Error(e)
+            Err(e) => return ast::Statement::Error(e),
         };
 
-        expect_tokens!(tokens, self::ast::Statement, "Expected }",
-                    (Token::RightCurl => {}),);
 
         else_if_blocks.push((Box::new(condition), stmt));
     }
@@ -758,16 +753,11 @@ fn parse_if_statement(tokens: &mut Tokens) -> ast::Statement {
 
     let else_block = match else_token {
         (_, Token::Else) => {
-            expect_tokens!(tokens, self::ast::Statement, "Expected {",
-                (Token::LeftCurl => {}),);
 
             let stmt = match parse_stmt_body(tokens) {
                 Ok(ok) => ok,
-                Err(e) => return ast::Statement::Error(e)
+                Err(e) => return ast::Statement::Error(e),
             };
-
-            expect_tokens!(tokens, self::ast::Statement, "Expected }",
-                        (Token::RightCurl => {}),);
 
             Some(stmt)
         }
@@ -797,25 +787,32 @@ fn parse_match_statement(tokens: &mut Tokens) -> ast::Statement {
             (_, Token::Wildcard) => {
                 let stmt = match parse_stmt_body(tokens) {
                     Ok(ok) => ok,
-                    Err(e) => return ast::Statement::Error(e)
+                    Err(e) => return ast::Statement::Error(e),
                 };
                 wildcard_arm = Some(stmt);
-                expect_tokens!(tokens, self::ast::Statement, "Expected }",
-                        (Token::RightCurl => {}),);
                 break;
-            },
+            }
             (_, Token::RightCurl) => break,
             (_, Token::Name(name)) => {
                 expect_tokens!(tokens, self::ast::Statement, "Expected =>",
                         (Token::FatRightArrow => {}),);
                 let stmt = match parse_stmt_body(tokens) {
                     Ok(ok) => ok,
-                    Err(e) => return ast::Statement::Error(e)
+                    Err(e) => return ast::Statement::Error(e),
                 };
-                arms.push((Symbol{name, ty: Type::Undefined}, stmt))
-            },
+                arms.push((
+                    Symbol {
+                        name,
+                        ty: Type::Undefined,
+                    },
+                    stmt,
+                ))
+            }
             other => {
-                return ast::Statement::Error(ast::ParseError::UnexpectedToken(other, "Expected match token".to_string()))
+                return ast::Statement::Error(ast::ParseError::UnexpectedToken(
+                    other,
+                    "Expected match token".to_string(),
+                ))
             }
         }
     }
@@ -982,8 +979,6 @@ fn parse_binding(tokens: &mut Tokens) -> ast::Binding {
         None => return ast::Binding::Error(ast::ParseError::UnexpectedEOF),
     };
 
-    println!("{:?}", token);
-
     match token {
         (_, Token::Function(_)) => {
             tokens.push(token);
@@ -1014,8 +1009,30 @@ fn parse_binding(tokens: &mut Tokens) -> ast::Binding {
 }
 
 fn parse_chained_binding(tokens: &mut Tokens) -> Option<Box<ast::Binding>> {
-    // TODO
-    None
+    let token = match tokens.pop() {
+        Some(val) => val,
+        None => return None,
+    };
+
+    match token {
+        (pos, Token::Method(name)) => {
+            tokens.push((pos, Token::Function(name)));
+            let fun = parse_function_call(tokens);
+            let chain = parse_chained_binding(tokens);
+            Some(Box::new(ast::Binding::Function(fun, chain)))
+        }
+        (_, Token::Member(name)) => Some(Box::new(ast::Binding::Field(
+            Symbol {
+                name: name.clone(),
+                ty: Type::Undefined,
+            },
+            parse_chained_binding(tokens),
+        ))),
+        other => {
+            tokens.push(other);
+            None
+        }
+    }
 }
 
 fn parse_function_call(tokens: &mut Tokens) -> ast::FunctionCall {

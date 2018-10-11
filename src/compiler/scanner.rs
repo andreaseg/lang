@@ -83,7 +83,7 @@ make_regex!(
     (False, r"(?P<false>false)|"),
     (If, r"(?P<if>if)|"),
     (Else, r"(?P<else>else)|"),
-    (Return, r"(?P<else>else)|"),
+    (Return, r"(?P<return>return)|"),
     (Match, r"(?P<match>match)|"),
     (Const, r"(?P<const>const)|"),
     (Mut, r"(?P<mut>mut)|"),
