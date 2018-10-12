@@ -49,19 +49,26 @@ mod ast {
             terminal::Constness, // const | mut | None
             Symbol,              // name
             Vec<Symbol>,         // (x, y, ...)
-            Vec<Statement>,      // = {...} | = ... ;
+            Scope,               // = {...} | = ... ;
         ),
         Field(
             terminal::Constness, // const | mut | None
             Symbol,              // name
-            Vec<Statement>,      // = {...} | = ... ;
+            Scope,               // = {...} | = ... ;
         ),
         Reassign(
-            Symbol,         // name
-            Vec<Statement>, // = {...} | = ... ;
+            Symbol, // name
+            Scope,  // = {...} | = ... ;
         ),
         Struct(Symbol, Vec<Box<(Symbol)>>), // struct name = {(name,)*}
         Enum(Symbol, Vec<Box<(Symbol)>>),   // enum name = {(name,)*}
+        Error(ParseError),
+    }
+
+    #[derive(PartialEq, Debug, Clone)]
+    pub enum Scope {
+        Closed(Vec<Statement>),
+        Open(Box<Statement>),
         Error(ParseError),
     }
 
@@ -70,15 +77,15 @@ mod ast {
         Assign(Box<Assignment>),
         Call(Box<FunctionCall>),
         If(
-            Box<Expression>,                        // If expression
-            Vec<Statement>,                         // Then statement
-            Vec<(Box<Expression>, Vec<Statement>)>, // (else if expression then statement )*
-            Option<Vec<Statement>>,                 // Else
+            Box<Expression>,               // If expression
+            Scope,                         // Then statement
+            Vec<(Box<Expression>, Scope)>, // (else if expression then statement )*
+            Option<Scope>,                 // Else
         ),
         Match(
             Symbol,
-            Vec<(Symbol, Vec<Statement>)>,
-            Option<Vec<Statement>>, /* _ => stmt */
+            Vec<(Symbol, Scope)>,
+            Option<Scope>, /* _ => stmt */
         ),
         Return(Box<Expression> /* return expression */),
         Error(ParseError),
@@ -361,10 +368,10 @@ fn parse_assignment(tokens: &mut Tokens) -> ast::Assignment {
     }
 }
 
-fn parse_stmt_body(tokens: &mut Tokens) -> Result<Vec<ast::Statement>, ast::ParseError> {
+fn parse_scope(tokens: &mut Tokens) -> ast::Scope {
     let token = match tokens.pop() {
         Some(val) => val,
-        None => return Err(ast::ParseError::UnexpectedEOF),
+        None => return ast::Scope::Error(ast::ParseError::UnexpectedEOF),
     };
 
     match token {
@@ -379,18 +386,18 @@ fn parse_stmt_body(tokens: &mut Tokens) -> Result<Vec<ast::Statement>, ast::Pars
                         (_, Token::RightCurl) => break,
                         _ => tokens.push(token),
                     },
-                    None => return Err(ast::ParseError::UnexpectedEOF),
+                    None => return ast::Scope::Error(ast::ParseError::UnexpectedEOF),
                 }
             }
 
-            Ok(stmt)
+            ast::Scope::Closed(stmt)
         }
         _ => {
             tokens.push(token);
             let expr = parse_expression(tokens);
-            expect_tokens_or_err!(tokens, "Expected ;",
+            expect_tokens!(tokens, self::ast::Scope, "Expected ;",
                     (Token::End => {}),);
-            Ok(vec![ast::Statement::Return(Box::new(expr))])
+            ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(expr))))
         }
     }
 }
@@ -417,10 +424,7 @@ fn parse_function_assignment(
     expect_tokens!(tokens, self::ast::Assignment, "Expected function assignment (=)",
                 (Token::Assign => {}),);
 
-    let stmt = match parse_stmt_body(tokens) {
-        Ok(ok) => ok,
-        Err(e) => return ast::Assignment::Error(e),
-    };
+    let stmt = parse_scope(tokens);
 
     ast::Assignment::Function(constness, Symbol { name, ty }, params, stmt)
 }
@@ -434,10 +438,7 @@ fn parse_field_assignment(
     expect_tokens!(tokens, self::ast::Assignment, "Expected field assignment (=)",
                 (Token::Assign => {}),);
 
-    let stmt = match parse_stmt_body(tokens) {
-        Ok(ok) => ok,
-        Err(e) => return ast::Assignment::Error(e),
-    };
+    let stmt = parse_scope(tokens);
 
     ast::Assignment::Field(constness, Symbol { name, ty }, stmt)
 }
@@ -502,10 +503,7 @@ fn parse_reassignment(tokens: &mut Tokens, name: String) -> ast::Assignment {
     expect_tokens!(tokens, self::ast::Assignment, "Expected reassignment (=)",
                 (Token::Assign => {}),);
 
-    let stmt = match parse_stmt_body(tokens) {
-        Ok(ok) => ok,
-        Err(e) => return ast::Assignment::Error(e),
-    };
+    let stmt = parse_scope(tokens);
 
     ast::Assignment::Reassign(
         Symbol {
@@ -704,10 +702,7 @@ fn parse_statement(tokens: &mut Tokens) -> ast::Statement {
 fn parse_if_statement(tokens: &mut Tokens) -> ast::Statement {
     let condition = parse_expression(tokens);
 
-    let stmt = match parse_stmt_body(tokens) {
-        Ok(ok) => ok,
-        Err(e) => return ast::Statement::Error(e),
-    };
+    let stmt = parse_scope(tokens);
 
     let mut else_if_blocks = Vec::new();
 
@@ -741,10 +736,7 @@ fn parse_if_statement(tokens: &mut Tokens) -> ast::Statement {
 
         let condition = parse_expression(tokens);
 
-        let stmt = match parse_stmt_body(tokens) {
-            Ok(ok) => ok,
-            Err(e) => return ast::Statement::Error(e),
-        };
+        let stmt = parse_scope(tokens);
 
         else_if_blocks.push((Box::new(condition), stmt));
     }
@@ -752,10 +744,7 @@ fn parse_if_statement(tokens: &mut Tokens) -> ast::Statement {
     let else_block = match tokens.pop() {
         Some(token) => match token {
             (_, Token::Else) => {
-                let stmt = match parse_stmt_body(tokens) {
-                    Ok(ok) => ok,
-                    Err(e) => return ast::Statement::Error(e),
-                };
+                let stmt = parse_scope(tokens);
 
                 Some(stmt)
             }
@@ -805,20 +794,14 @@ fn parse_match_statement(tokens: &mut Tokens) -> ast::Statement {
             (_, Token::Wildcard) => {
                 expect_tokens!(tokens, self::ast::Statement, "Expected =>",
                         (Token::FatRightArrow => {}),);
-                let stmt = match parse_stmt_body(tokens) {
-                    Ok(ok) => ok,
-                    Err(e) => return ast::Statement::Error(e),
-                };
+                let stmt = parse_scope(tokens);
                 wildcard_arm = Some(stmt);
             }
             (_, Token::RightCurl) => break,
             (_, Token::Name(name)) => {
                 expect_tokens!(tokens, self::ast::Statement, "Expected =>",
                         (Token::FatRightArrow => {}),);
-                let stmt = match parse_stmt_body(tokens) {
-                    Ok(ok) => ok,
-                    Err(e) => return ast::Statement::Error(e),
-                };
+                let stmt = parse_scope(tokens);
                 arms.push((
                     Symbol {
                         name,
@@ -1154,7 +1137,7 @@ mod tests {
         let mut tokens = generate_test_tokens("integer", "1");
         let ast = parse_binding(&mut tokens);
         assert!(tokens.is_empty());
-        
+
         assert_eq!(
             ast,
             ast::Binding::Literal(Box::new(ast::terminal::Literal::Integer(1)))
@@ -1444,15 +1427,15 @@ mod tests {
                     name: "foo".to_string(),
                     ty: Type::Int
                 },
-                vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
-                    Box::new(ast::Binding::Field(
+                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(
+                    ast::Expression::Primary(Box::new(ast::Binding::Field(
                         Symbol {
                             name: "bar".to_string(),
                             ty: Type::Undefined
                         },
                         None
-                    ))
-                )))]
+                    )))
+                ))))
             )))
         );
     }
@@ -1524,7 +1507,8 @@ mod tests {
 
         assert_eq!(
             ast,
-            ast::Statement::If(Box::new(cmp), vec![stmt], vec![], None)
+            ast::Statement::If(Box::new(cmp), 
+            ast::Scope::Closed(vec![stmt]), vec![], None)
         );
     }
 
@@ -1573,7 +1557,10 @@ mod tests {
 
         assert_eq!(
             ast,
-            ast::Statement::If(Box::new(cmp), vec![stmt], vec![], Some(vec![stmt2]))
+            ast::Statement::If(Box::new(cmp), 
+            ast::Scope::Closed(vec![stmt]), 
+            vec![], 
+            Some(ast::Scope::Closed(vec![stmt2])))
         );
     }
 
@@ -1659,9 +1646,9 @@ mod tests {
             ast,
             ast::Statement::If(
                 Box::new(cmp),
-                vec![stmt],
-                vec![(Box::new(cmp2), vec![stmt2])],
-                Some(vec![stmt3])
+                ast::Scope::Closed(vec![stmt]),
+                vec![(Box::new(cmp2), ast::Scope::Closed(vec![stmt2]))],
+                Some(ast::Scope::Closed(vec![stmt3]))
             )
         );
     }
@@ -1684,11 +1671,11 @@ mod tests {
                     name: "a".to_string(),
                     ty: Type::Undefined,
                 },
-                vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
                     Box::new(ast::Binding::Literal(Box::new(
                         ast::terminal::Literal::Integer(value),
                     ))),
-                )))],
+                ))))),
             )))
         });
 
@@ -1705,17 +1692,17 @@ mod tests {
                             name: "bar".to_string(),
                             ty: Type::Undefined
                         },
-                        vec![stmt.next().unwrap()]
+                        ast::Scope::Closed(vec![stmt.next().unwrap()])
                     ),
                     (
                         Symbol {
                             name: "baz".to_string(),
                             ty: Type::Undefined
                         },
-                        vec![stmt.next().unwrap()]
+                        ast::Scope::Closed(vec![stmt.next().unwrap()])
                     )
                 ],
-                Some(vec![stmt.next().unwrap()])
+                Some(ast::Scope::Closed(vec![stmt.next().unwrap()]))
             )
         )
     }
@@ -1754,11 +1741,11 @@ mod tests {
                     name: "foo".to_string(),
                     ty: Type::Int
                 },
-                vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
                     Box::new(ast::Binding::Literal(Box::new(
                         ast::terminal::Literal::Integer(1)
                     )))
-                )))]
+                )))))
             )
         );
     }
@@ -1776,11 +1763,11 @@ mod tests {
                     name: "foo".to_string(),
                     ty: Type::Undefined
                 },
-                vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
                     Box::new(ast::Binding::Literal(Box::new(
                         ast::terminal::Literal::Integer(1)
                     )))
-                )))]
+                )))))
             )
         );
     }
@@ -1791,7 +1778,7 @@ mod tests {
             "stmt_block",
             "{mut float foo = 1.0; \n bar(foo); \n return foo;}",
         );
-        let ast = parse_stmt_body(&mut tokens).expect("Error parsing statement");
+        let ast = parse_scope(&mut tokens);
         assert!(tokens.is_empty());
 
         let stmt1 = ast::Statement::Assign(Box::new(ast::Assignment::Field(
@@ -1800,11 +1787,11 @@ mod tests {
                 name: "foo".to_string(),
                 ty: Type::Float,
             },
-            vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+            ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
                 Box::new(ast::Binding::Literal(Box::new(
                     ast::terminal::Literal::Float(1.0),
                 ))),
-            )))],
+            ))))),
         )));
 
         let stmt2 = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
@@ -1833,7 +1820,7 @@ mod tests {
             ),
         ))));
 
-        assert_eq!(ast, vec![stmt1, stmt2, stmt3]);
+        assert_eq!(ast, ast::Scope::Closed(vec![stmt1, stmt2, stmt3]));
     }
 
 }
