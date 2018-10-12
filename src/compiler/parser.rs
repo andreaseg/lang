@@ -733,8 +733,8 @@ fn parse_if_statement(tokens: &mut Tokens) -> ast::Statement {
         match if_token {
             (_, Token::If) => {}
             _ => {
-                tokens.push(else_token);
                 tokens.push(if_token);
+                tokens.push(else_token);
                 break;
             }
         }
@@ -1533,6 +1533,7 @@ mod tests {
         let mut tokens = generate_test_tokens("stmt_if_else", "if a==b {foo();} else {bar();}");
         let ast = parse_statement(&mut tokens);
         println!("AST: {:?},", ast);
+        tokens.reverse();
         println!("Leftover tokens: {:?}", tokens);
         assert!(tokens.is_empty());
 
@@ -1584,6 +1585,7 @@ mod tests {
         );
         let ast = parse_statement(&mut tokens);
         println!("AST: {:?},", ast);
+        tokens.reverse();
         println!("Leftover tokens: {:?}", tokens);
         assert!(tokens.is_empty());
 
@@ -1619,14 +1621,14 @@ mod tests {
                 ast::terminal::Operator::Add,
                 Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
                     Symbol {
-                        name: "a".to_string(),
+                        name: "c".to_string(),
                         ty: Type::Undefined,
                     },
                     None,
                 )))),
                 Box::new(ast::Expression::Primary(Box::new(ast::Binding::Field(
                     Symbol {
-                        name: "b".to_string(),
+                        name: "d".to_string(),
                         ty: Type::Undefined,
                     },
                     None,
@@ -1672,6 +1674,7 @@ mod tests {
         );
         let ast = parse_statement(&mut tokens);
         println!("AST: {:?},", ast);
+        tokens.reverse();
         println!("Leftover tokens: {:?}", tokens);
         assert!(tokens.is_empty());
 
