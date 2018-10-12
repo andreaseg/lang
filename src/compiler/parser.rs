@@ -375,13 +375,11 @@ fn parse_stmt_body(tokens: &mut Tokens) -> Result<Vec<ast::Statement>, ast::Pars
                 stmt.push(parse_statement(tokens));
 
                 match tokens.pop() {
-                    Some(token) => {
-                        match token {
-                            (_, Token::RightCurl) => break,
-                            _ => tokens.push(token)
-                        }
+                    Some(token) => match token {
+                        (_, Token::RightCurl) => break,
+                        _ => tokens.push(token),
                     },
-                    None => return Err(ast::ParseError::UnexpectedEOF)
+                    None => return Err(ast::ParseError::UnexpectedEOF),
                 }
             }
 
@@ -692,7 +690,10 @@ fn parse_statement(tokens: &mut Tokens) -> ast::Statement {
             return parse_call_statement(tokens);
         }
         (_, Token::Return) => {
-            return ast::Statement::Return(Box::new(parse_expression(tokens)));
+            let expr = parse_expression(tokens);
+            expect_tokens!(tokens, self::ast::Statement, "Expected ;",
+                (Token::End => {}),);
+            return ast::Statement::Return(Box::new(expr));
         }
         _ => tokens.push(token),
     }
@@ -1153,6 +1154,8 @@ mod tests {
     fn integer_binding() {
         let mut tokens = generate_test_tokens("integer", "1");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+        
         assert_eq!(
             ast,
             ast::Binding::Literal(Box::new(ast::terminal::Literal::Integer(1)))
@@ -1163,6 +1166,8 @@ mod tests {
     fn float_binding() {
         let mut tokens = generate_test_tokens("float", "1.0");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Binding::Literal(Box::new(ast::terminal::Literal::Float(1.0)))
@@ -1173,6 +1178,8 @@ mod tests {
     fn string_binding() {
         let mut tokens = generate_test_tokens("string", "\"string\"");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Binding::Literal(Box::new(ast::terminal::Literal::String(
@@ -1186,6 +1193,8 @@ mod tests {
         {
             let mut tokens = generate_test_tokens("bool_true", "true");
             let ast = parse_binding(&mut tokens);
+            assert!(tokens.is_empty());
+
             assert_eq!(
                 ast,
                 ast::Binding::Literal(Box::new(ast::terminal::Literal::Bool(true)))
@@ -1194,6 +1203,8 @@ mod tests {
         {
             let mut tokens = generate_test_tokens("bool_false", "false");
             let ast = parse_binding(&mut tokens);
+            assert!(tokens.is_empty());
+
             assert_eq!(
                 ast,
                 ast::Binding::Literal(Box::new(ast::terminal::Literal::Bool(false)))
@@ -1205,6 +1216,8 @@ mod tests {
     fn field_binding() {
         let mut tokens = generate_test_tokens("field_binding", "foo");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Binding::Field(
@@ -1221,6 +1234,8 @@ mod tests {
     fn empty_function_binding() {
         let mut tokens = generate_test_tokens("empty_function_binding", "foo()");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Binding::Function(
@@ -1240,6 +1255,8 @@ mod tests {
     fn member_binding() {
         let mut tokens = generate_test_tokens("empty_function_binding", "foo.bar");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Binding::Field(
@@ -1262,6 +1279,8 @@ mod tests {
     fn method_binding() {
         let mut tokens = generate_test_tokens("empty_function_binding", "foo.bar()");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Binding::Field(
@@ -1287,6 +1306,8 @@ mod tests {
     fn chain_method_binding() {
         let mut tokens = generate_test_tokens("empty_function_binding", "foo().bar()");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Binding::Function(
@@ -1315,6 +1336,8 @@ mod tests {
     fn chain_member_binding() {
         let mut tokens = generate_test_tokens("empty_function_binding", "foo().bar");
         let ast = parse_binding(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Binding::Function(
@@ -1340,6 +1363,8 @@ mod tests {
     fn expr_add() {
         let mut tokens = generate_test_tokens("add", "1 + 2");
         let ast = parse_expression(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Expression::Binary(
@@ -1358,6 +1383,8 @@ mod tests {
     fn expr_and() {
         let mut tokens = generate_test_tokens("add", "foo && bar()");
         let ast = parse_expression(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Expression::Binary(
@@ -1387,6 +1414,8 @@ mod tests {
     fn expr_incr() {
         let mut tokens = generate_test_tokens("add", "foo++");
         let ast = parse_expression(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Expression::Unary(
@@ -1406,6 +1435,8 @@ mod tests {
     fn stmt_assign() {
         let mut tokens = generate_test_tokens("stmt_assign", "int foo = bar;");
         let ast = parse_statement(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Statement::Assign(Box::new(ast::Assignment::Field(
@@ -1431,6 +1462,8 @@ mod tests {
     fn stmt_call() {
         let mut tokens = generate_test_tokens("stmt_call", "foo(bar, baz);");
         let ast = parse_statement(&mut tokens);
+        assert!(tokens.is_empty());
+
         assert_eq!(
             ast,
             ast::Statement::Call(Box::new(ast::FunctionCall::Function(
@@ -1462,6 +1495,7 @@ mod tests {
     fn stmt_if() {
         let mut tokens = generate_test_tokens("stmt_if", "if a==b {foo();}");
         let ast = parse_statement(&mut tokens);
+        assert!(tokens.is_empty());
 
         let cmp = ast::Expression::Binary(
             ast::terminal::Operator::Equal,
@@ -1499,6 +1533,9 @@ mod tests {
     fn stmt_if_else() {
         let mut tokens = generate_test_tokens("stmt_if_else", "if a==b {foo();} else {bar();}");
         let ast = parse_statement(&mut tokens);
+        println!("AST: {:?},", ast);
+        println!("Leftover tokens: {:?}", tokens);
+        assert!(tokens.is_empty());
 
         let cmp = ast::Expression::Binary(
             ast::terminal::Operator::Equal,
@@ -1547,6 +1584,9 @@ mod tests {
             "if a==b {foo();} else if c+d>0 {bar();} else {baz();}",
         );
         let ast = parse_statement(&mut tokens);
+        println!("AST: {:?},", ast);
+        println!("Leftover tokens: {:?}", tokens);
+        assert!(tokens.is_empty());
 
         let cmp = ast::Expression::Binary(
             ast::terminal::Operator::Equal,
@@ -1632,6 +1672,9 @@ mod tests {
             "match foo {bar => {a = 1;} baz => {a = 2;} _ => {a = 3;}}",
         );
         let ast = parse_statement(&mut tokens);
+        println!("AST: {:?},", ast);
+        println!("Leftover tokens: {:?}", tokens);
+        assert!(tokens.is_empty());
 
         let mut stmt = vec![1, 2, 3].into_iter().map(|value| {
             ast::Statement::Assign(Box::new(ast::Assignment::Reassign(
@@ -1679,6 +1722,7 @@ mod tests {
     fn stmt_return() {
         let mut tokens = generate_test_tokens("stmt_return", "return foo;");
         let ast = parse_statement(&mut tokens);
+        assert!(tokens.is_empty());
 
         assert_eq!(
             ast,
@@ -1696,8 +1740,9 @@ mod tests {
 
     #[test]
     fn assign_field() {
-        let mut tokens = generate_test_tokens("assign_field", "mut int foo = 1");
+        let mut tokens = generate_test_tokens("assign_field", "mut int foo = 1;");
         let ast = parse_assignment(&mut tokens);
+        assert!(tokens.is_empty());
 
         assert_eq!(
             ast,
@@ -1718,8 +1763,9 @@ mod tests {
 
     #[test]
     fn reassign_field() {
-        let mut tokens = generate_test_tokens("reassign_field", "foo = 1");
+        let mut tokens = generate_test_tokens("reassign_field", "foo = 1;");
         let ast = parse_assignment(&mut tokens);
+        assert!(tokens.is_empty());
 
         assert_eq!(
             ast,
@@ -1737,5 +1783,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn stmt_body() {
+        let mut tokens = generate_test_tokens(
+            "stmt_block",
+            "{mut float foo = 1.0; \n bar(foo); \n return foo;}",
+        );
+        let ast = parse_stmt_body(&mut tokens).expect("Error parsing statement");
+        assert!(tokens.is_empty());
+
+        let stmt1 = ast::Statement::Assign(Box::new(ast::Assignment::Field(
+            ast::terminal::Constness::Mut,
+            Symbol {
+                name: "foo".to_string(),
+                ty: Type::Float,
+            },
+            vec![ast::Statement::Return(Box::new(ast::Expression::Primary(
+                Box::new(ast::Binding::Literal(Box::new(
+                    ast::terminal::Literal::Float(1.0),
+                ))),
+            )))],
+        )));
+
+        let stmt2 = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
+            Symbol {
+                name: "bar".to_string(),
+                ty: Type::Undefined,
+            },
+            vec![Box::new(ast::Expression::Primary(Box::new(
+                ast::Binding::Field(
+                    Symbol {
+                        name: "foo".to_string(),
+                        ty: Type::Undefined,
+                    },
+                    None,
+                ),
+            )))],
+        )));
+
+        let stmt3 = ast::Statement::Return(Box::new(ast::Expression::Primary(Box::new(
+            ast::Binding::Field(
+                Symbol {
+                    name: "foo".to_string(),
+                    ty: Type::Undefined,
+                },
+                None,
+            ),
+        ))));
+
+        assert_eq!(ast, vec![stmt1, stmt2, stmt3]);
+    }
 
 }
