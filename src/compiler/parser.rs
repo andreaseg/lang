@@ -1507,8 +1507,7 @@ mod tests {
 
         assert_eq!(
             ast,
-            ast::Statement::If(Box::new(cmp), 
-            ast::Scope::Closed(vec![stmt]), vec![], None)
+            ast::Statement::If(Box::new(cmp), ast::Scope::Closed(vec![stmt]), vec![], None)
         );
     }
 
@@ -1557,10 +1556,12 @@ mod tests {
 
         assert_eq!(
             ast,
-            ast::Statement::If(Box::new(cmp), 
-            ast::Scope::Closed(vec![stmt]), 
-            vec![], 
-            Some(ast::Scope::Closed(vec![stmt2])))
+            ast::Statement::If(
+                Box::new(cmp),
+                ast::Scope::Closed(vec![stmt]),
+                vec![],
+                Some(ast::Scope::Closed(vec![stmt2]))
+            )
         );
     }
 
@@ -1671,11 +1672,11 @@ mod tests {
                     name: "a".to_string(),
                     ty: Type::Undefined,
                 },
-                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
-                    Box::new(ast::Binding::Literal(Box::new(
+                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(
+                    ast::Expression::Primary(Box::new(ast::Binding::Literal(Box::new(
                         ast::terminal::Literal::Integer(value),
-                    ))),
-                ))))),
+                    )))),
+                )))),
             )))
         });
 
@@ -1741,11 +1742,11 @@ mod tests {
                     name: "foo".to_string(),
                     ty: Type::Int
                 },
-                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
-                    Box::new(ast::Binding::Literal(Box::new(
+                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(
+                    ast::Expression::Primary(Box::new(ast::Binding::Literal(Box::new(
                         ast::terminal::Literal::Integer(1)
-                    )))
-                )))))
+                    ))))
+                ))))
             )
         );
     }
@@ -1763,11 +1764,11 @@ mod tests {
                     name: "foo".to_string(),
                     ty: Type::Undefined
                 },
-                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
-                    Box::new(ast::Binding::Literal(Box::new(
+                ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(
+                    ast::Expression::Primary(Box::new(ast::Binding::Literal(Box::new(
                         ast::terminal::Literal::Integer(1)
-                    )))
-                )))))
+                    ))))
+                ))))
             )
         );
     }
@@ -1787,11 +1788,11 @@ mod tests {
                 name: "foo".to_string(),
                 ty: Type::Float,
             },
-            ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(ast::Expression::Primary(
-                Box::new(ast::Binding::Literal(Box::new(
+            ast::Scope::Open(Box::new(ast::Statement::Return(Box::new(
+                ast::Expression::Primary(Box::new(ast::Binding::Literal(Box::new(
                     ast::terminal::Literal::Float(1.0),
-                ))),
-            ))))),
+                )))),
+            )))),
         )));
 
         let stmt2 = ast::Statement::Call(Box::new(ast::FunctionCall::Function(
