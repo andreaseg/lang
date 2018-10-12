@@ -810,7 +810,6 @@ fn parse_match_statement(tokens: &mut Tokens) -> ast::Statement {
                     Err(e) => return ast::Statement::Error(e),
                 };
                 wildcard_arm = Some(stmt);
-                break;
             }
             (_, Token::RightCurl) => break,
             (_, Token::Name(name)) => {
