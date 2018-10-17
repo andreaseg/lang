@@ -386,12 +386,13 @@ mod tests {
     fn multiline() {
         test_scanner!(
             "multiline",
-            "Foo bar = Foo::new()\nbar.run()",
+            "Foo bar = Foo.new()\nbar.run()",
             (0, 0, Token::Name("Foo".to_string())),
             (0, 4, Token::Name("bar".to_string())),
             (0, 8, Token::Assign),
-            (0, 15, Token::Function("new".to_string())),
-            (0, 19, Token::RightPar),
+            (0, 10, Token::Name("Foo".to_string())),
+            (0, 13, Token::Method("new".to_string())),
+            (0, 18, Token::RightPar),
             (1, 0, Token::Name("bar".to_string())),
             (1, 3, Token::Method("run".to_string())),
             (1, 8, Token::RightPar),

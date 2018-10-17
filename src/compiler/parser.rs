@@ -640,10 +640,46 @@ fn parse_signature(tokens: &mut Tokens) -> Result<Type, ast::ParseError> {
     }
 }
 
+fn lookahead_for_assign(tokens: &mut Tokens) -> Result<bool, ast::ParseError> {
+    let mut lookahead = Vec::new();
+    loop {
+        match tokens.pop() {
+            Some(token) => {
+                match token {
+                    (pos, Token::End) => {
+                        lookahead.push((pos, Token::End));
+                        while let Some(t) = lookahead.pop() {
+                            tokens.push(t);
+                        }
+                        return Ok(false);
+                    },
+                    (pos, Token::Assign) => {
+                        lookahead.push((pos, Token::Assign));
+                        while let Some(t) = lookahead.pop() {
+                            tokens.push(t);
+                        }
+                        return Ok(true);
+                    },
+                    other => {
+                        lookahead.push(other);
+                    }
+                }
+            },
+            None => return Err(ast::ParseError::UnexpectedEOF)
+        }
+    }
+
+}
+
 fn parse_statement(tokens: &mut Tokens) -> ast::Statement {
     let token = match tokens.pop() {
         Some(val) => val,
         None => return ast::Statement::Error(ast::ParseError::UnexpectedEOF),
+    };
+
+    let is_assign = match lookahead_for_assign(tokens) {
+        Ok(val) => val,
+        Err(e) => return ast::Statement::Error(e)
     };
 
     match token {
@@ -656,7 +692,16 @@ fn parse_statement(tokens: &mut Tokens) -> ast::Statement {
         }
         _ => {
             tokens.push(token);
-            ast::Statement::Assign(Box::new(parse_assignment(tokens)))
+            if is_assign {
+                let assign = parse_assignment(tokens);
+                ast::Statement::Assign(Box::new(assign))
+            } else {
+                let call = parse_expression(tokens);
+                expect_tokens!(tokens, self::ast::Statement, "Expected ;",
+                (Token::End => {}),);
+                ast::Statement::Call(Box::new(call))
+            }
+            
         }
     }
 }
@@ -1428,7 +1473,7 @@ mod tests {
     fn stmt_body() {
         let mut tokens = generate_test_tokens(
             "stmt_block",
-            "{mut float foo = 1.0; \n bar(foo); \n return foo;}",
+            "{mut float foo = 1.0; \n bar(foo); \n foo;}",
         );
         let ast = parse_scope(&mut tokens);
         assert!(tokens.is_empty());
