@@ -6,6 +6,7 @@ extern crate tempdir;
 extern crate num_derive;
 
 mod compiler;
+mod visualizer;
 
 fn main() {
     println!("Hello, world!");

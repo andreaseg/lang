@@ -33,7 +33,6 @@ pub enum Token {
     LeftCurl,
     RightCurl,
     Function(String),
-    Module(String),
     Method(String),
     Member(String),
     Name(String),
@@ -44,17 +43,42 @@ pub enum Token {
     RightArrow,
     FatRightArrow,
     Truthy(bool),
-    If,
-    Else,
-    Match,
     Const,
     Mut,
     Wildcard,
     Error(String),
-    Struct,
-    Enum,
     End,
-    Return,
+    Type,
+}
+
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match &self {
+            Token::Float(n) => write!(f, "Float {}", n),
+            Token::Integer(n) => write!(f, "Integer {}", n),
+            Token::LeftPar => write!(f, "("),
+            Token::RightPar => write!(f, ")"),
+            Token::LeftCurl => write!(f, "{{"),
+            Token::RightCurl => write!(f, "}}"),
+            Token::Function(n) => write!(f, "{}()", n),
+            Token::Method(n) => write!(f, ".{}()", n),
+            Token::Member(n) => write!(f, ".{}", n),
+            Token::Name(n) => write!(f, "{}", n),
+            Token::Comma => write!(f, ","),
+            Token::Operator(n) => write!(f, "{}", n),
+            Token::Assign => write!(f, "="),
+            Token::String(n) => write!(f, "\"{}\"", n),
+            Token::RightArrow => write!(f, "->"),
+            Token::FatRightArrow => write!(f, "=>"),
+            Token::Truthy(n) => write!(f, "{}", n),
+            Token::Const => write!(f, "const"),
+            Token::Mut => write!(f, "mut"),
+            Token::Wildcard => write!(f, "_"),
+            Token::Type => write!(f, "type"),
+            Token::End => write!(f, ";"),
+            Token::Error(n) => write!(f, "Error {}", n),
+        }
+    }
 }
 
 macro_rules! make_regex {
@@ -81,19 +105,13 @@ make_regex!(
     (RCurl, r"(?P<rcurl>\})|"),
     (True, r"(?P<true>true)|"),
     (False, r"(?P<false>false)|"),
-    (If, r"(?P<if>if)|"),
-    (Else, r"(?P<else>else)|"),
-    (Return, r"(?P<return>return)|"),
-    (Match, r"(?P<match>match)|"),
     (Const, r"(?P<const>const)|"),
     (Mut, r"(?P<mut>mut)|"),
     (Wildcard, r"(?P<wildcard>_)|"),
-    (Struct, r"(?P<struct>struct)|"),
-    (Enum, r"(?P<enum>enum)|"),
+    (Type, r"(?P<type>type)|"),
     (Method, r"(?P<method>\.[[:alpha:]][[:alnum:]]*\()|"),
     (Member, r"(?P<member>\.[[:alpha:]][[:alnum:]]*)|"),
     (Function, r"(?P<function>[[:alpha:]][[:alnum:]]*\()|"),
-    (Module, r"(?P<module>[[:alpha:]][[:alnum:]]*::)|"),
     (Name, r"(?P<name>[[:alpha:]][[:alnum:]]*)|"),
     (Comma, r"(?P<comma>,)|"),
     (Rightarrow, r"(?P<rightarrow>->)|"),
@@ -185,18 +203,12 @@ pub fn tokenize(file: File) -> Result<Vec<(TokenPosition, Token)>, Vec<ScanError
                 Re::RCurl => ret_tok!(Token::RightCurl),
                 Re::True => ret_tok!(Token::Truthy(true)),
                 Re::False => ret_tok!(Token::Truthy(false)),
-                Re::If => ret_tok!(Token::If),
-                Re::Else => ret_tok!(Token::Else),
-                Re::Match => ret_tok!(Token::Match),
                 Re::Const => ret_tok!(Token::Const),
                 Re::Mut => ret_tok!(Token::Mut),
                 Re::Wildcard => ret_tok!(Token::Wildcard),
-                Re::Struct => ret_tok!(Token::Struct),
-                Re::Enum => ret_tok!(Token::Enum),
                 Re::Method => ret_tok!(Token::Method(trunc_cap(&cap, 1, 1))),
                 Re::Member => ret_tok!(Token::Member(trunc_cap(&cap, 1, 0))),
                 Re::Function => ret_tok!(Token::Function(trunc_cap(&cap, 0, 1))),
-                Re::Module => ret_tok!(Token::Module(trunc_cap(&cap, 0, 2))),
                 Re::Name => ret_tok!(Token::Name(cap.as_str().to_string())),
                 Re::Comma => ret_tok!(Token::Comma),
                 Re::Rightarrow => ret_tok!(Token::RightArrow),
@@ -204,7 +216,7 @@ pub fn tokenize(file: File) -> Result<Vec<(TokenPosition, Token)>, Vec<ScanError
                 Re::Operator => ret_tok!(Token::Operator(cap.as_str().to_string())),
                 Re::Assign => ret_tok!(Token::Assign),
                 Re::String => ret_tok!(Token::String(trunc_cap(&cap, 1, 1))),
-                Re::Return => ret_tok!(Token::Return),
+                Re::Type => ret_tok!(Token::Type),
                 Re::Whitespace => {
                     continue;
                 }
@@ -278,7 +290,6 @@ mod tests {
         test_token!("left_curl", "{", Token::LeftCurl);
         test_token!("right_curl", "}", Token::RightCurl);
         test_token!("function", "fun(", Token::Function("fun".to_string()));
-        test_token!("module", "mod::", Token::Module("mod".to_string()));
         test_token!("method", ".map(", Token::Method("map".to_string()));
         test_token!("member", ".val", Token::Member("val".to_string()));
         test_token!("name", "val", Token::Name("val".to_string()));
@@ -291,14 +302,10 @@ mod tests {
         test_token!("right_arrow", "->", Token::RightArrow);
         test_token!("true", "true", Token::Truthy(true));
         test_token!("false", "false", Token::Truthy(false));
-        test_token!("if", "if", Token::If);
-        test_token!("else", "else", Token::Else);
-        test_token!("match", "match", Token::Match);
         test_token!("const", "const", Token::Const);
         test_token!("mut", "mut", Token::Mut);
         test_token!("wildcard", "_", Token::Wildcard);
-        test_token!("struct", "struct", Token::Struct);
-        test_token!("enum", "enum", Token::Enum);
+        test_token!("type", "type", Token::Type);
 
         test_token!("shiftleft", "<<", Token::Operator("<<".to_string()));
         test_token!("shiftright", ">>", Token::Operator(">>".to_string()));
@@ -383,7 +390,6 @@ mod tests {
             (0, 0, Token::Name("Foo".to_string())),
             (0, 4, Token::Name("bar".to_string())),
             (0, 8, Token::Assign),
-            (0, 10, Token::Module("Foo".to_string())),
             (0, 15, Token::Function("new".to_string())),
             (0, 19, Token::RightPar),
             (1, 0, Token::Name("bar".to_string())),
