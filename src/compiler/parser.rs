@@ -29,6 +29,7 @@ pub mod ast {
     pub enum ParseError {
         UnexpectedToken((TokenPosition, Token), /* message */ String),
         UnexpectedEOF,
+        Other(String)
     }
 
     #[derive(PartialEq, Debug, Clone)]
@@ -82,13 +83,11 @@ pub mod ast {
     pub enum Expression {
         Literal(
             Box<terminal::Literal>,
-            Option<Box<Expression>>, /* chained function */
         ),
-        Field(Symbol, Option<Box<Expression>> /* chained function */),
+        Field(Symbol),
         Function(
             Symbol,
-            Vec<Expression>,         /* args */
-            Option<Box<Expression>>, /* chained function */
+            Vec<Expression> /* args */
         ),
         Error(ParseError),
     }
@@ -717,8 +716,7 @@ macro_rules! parse_binary_expr {
                 $(
                     $left => ast::Expression::Function(
                         Symbol {name: $op.to_string(), ty: Type::Undefined},
-                        vec![node, $next_parse($tokens)],
-                        None
+                        vec![node, $next_parse($tokens)]
                     ),
                 )+
                 other => {
@@ -741,47 +739,47 @@ fn parse_expression(tokens: &mut Tokens) -> ast::Expression {
 }
 
 fn parse_or_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_and_expr, ("||" => "$or"),)
+    parse_binary_expr!(tokens, parse_and_expr, ("||" => "(||)"),)
 }
 
 fn parse_and_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_bor_expr, ("&&" => "$and"),)
+    parse_binary_expr!(tokens, parse_bor_expr, ("&&" => "(&&)"),)
 }
 
 fn parse_bor_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_xor_expr, ("|" => "$bor"),)
+    parse_binary_expr!(tokens, parse_xor_expr, ("|" => "(|)"),)
 }
 
 fn parse_xor_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_band_expr, ("^" => "$bxor"),)
+    parse_binary_expr!(tokens, parse_band_expr, ("^" => "(^)"),)
 }
 
 fn parse_band_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_cmp_expr, ("&" => "$band"),)
+    parse_binary_expr!(tokens, parse_cmp_expr, ("&" => "(&)"),)
 }
 
 fn parse_cmp_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_bitshift_expr, ("==" => "$eq"),
-    ("!=" => "$neq"),
-    ("<" => "$le"),
-    (">" => "$ge"),
-    ("<=" => "$geq"),
-    (">=" => "$leq"),)
+    parse_binary_expr!(tokens, parse_bitshift_expr, ("==" => "(==)"),
+    ("!=" => "(!=)"),
+    ("<" => "(<)"),
+    (">" => "(>)"),
+    ("<=" => "(<=)"),
+    (">=" => "(>=)"),)
 }
 
 fn parse_bitshift_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_add_expr, ("<<" => "$bsleft"),
-    (">>" => "$bsright"),)
+    parse_binary_expr!(tokens, parse_add_expr, ("<<" => "(<<)"),
+    (">>" => "(>>)"),)
 }
 
 fn parse_add_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_mul_expr, ("+" => "$add"),
-    ("-" => "$sub"),)
+    parse_binary_expr!(tokens, parse_mul_expr, ("+" => "(+)"),
+    ("-" => "(-)"),)
 }
 
 fn parse_mul_expr(tokens: &mut Tokens) -> ast::Expression {
-    parse_binary_expr!(tokens, parse_unary_expr, ("*" => "$mul"),
-    ("/" => "$div"),)
+    parse_binary_expr!(tokens, parse_unary_expr, ("*" => "(*)"),
+    ("/" => "(/)"),)
 }
 
 fn parse_unary_expr(tokens: &mut Tokens) -> ast::Expression {
@@ -794,19 +792,17 @@ fn parse_unary_expr(tokens: &mut Tokens) -> ast::Expression {
         (_, Token::Operator(op)) => match op.as_ref() {
             "-" => ast::Expression::Function(
                 Symbol {
-                    name: "$neg".to_string(),
+                    name: "(-)".to_string(),
                     ty: Type::Undefined,
                 },
-                vec![parse_primary_expr(tokens)],
-                None,
+                vec![parse_primary_expr(tokens)]
             ),
             "~" => ast::Expression::Function(
                 Symbol {
-                    name: "$bneg".to_string(),
+                    name: "(~)".to_string(),
                     ty: Type::Undefined,
                 },
-                vec![parse_primary_expr(tokens)],
-                None,
+                vec![parse_primary_expr(tokens)]
             ),
             other => panic!("Unexpected token {:?}, should be - or +", other),
         },
@@ -819,21 +815,19 @@ fn parse_unary_expr(tokens: &mut Tokens) -> ast::Expression {
                         "++" => {
                             node = ast::Expression::Function(
                                 Symbol {
-                                    name: "$incr".to_string(),
+                                    name: "(++)".to_string(),
                                     ty: Type::Undefined,
                                 },
-                                vec![node],
-                                None,
+                                vec![node]
                             )
                         }
                         "--" => {
                             node = ast::Expression::Function(
                                 Symbol {
-                                    name: "$decr".to_string(),
+                                    name: "(--)".to_string(),
                                     ty: Type::Undefined,
                                 },
-                                vec![node],
-                                None,
+                                vec![node]
                             )
                         }
                         _ => tokens.push((pos, Token::Operator(op.clone()))),
@@ -881,122 +875,150 @@ fn parse_binding(tokens: &mut Tokens) -> ast::Expression {
         None => return ast::Expression::Error(ast::ParseError::UnexpectedEOF),
     };
 
-    match token {
+    let mut expr_chain = Vec::new();
+
+    let expr = match token {
         (_, Token::Function(_)) => {
             tokens.push(token);
-            let fun = parse_function_call(tokens);
-            let chain = parse_chained_binding(tokens);
-            match fun {
-                ast::Expression::Function(symbol, args, chain) => {
-                    ast::Expression::Function(symbol, args, chain)
-                }
-                _ => unreachable!(),
-            }
-        }
+            parse_function_call(tokens)
+        },
         (_, Token::Name(name)) => ast::Expression::Field(
             Symbol {
                 name: name.clone(),
                 ty: Type::Undefined,
-            },
-            parse_chained_binding(tokens),
+            }
         ),
         (_, Token::Float(x)) => ast::Expression::Literal(
-            Box::new(ast::terminal::Literal::Float(x)),
-            parse_chained_binding(tokens),
+            Box::new(ast::terminal::Literal::Float(x))
         ),
         (_, Token::Integer(n)) => ast::Expression::Literal(
-            Box::new(ast::terminal::Literal::Integer(n)),
-            parse_chained_binding(tokens),
+            Box::new(ast::terminal::Literal::Integer(n))
         ),
         (_, Token::Truthy(b)) => ast::Expression::Literal(
-            Box::new(ast::terminal::Literal::Bool(b)),
-            parse_chained_binding(tokens),
+            Box::new(ast::terminal::Literal::Bool(b))
         ),
         (_, Token::String(s)) => ast::Expression::Literal(
-            Box::new(ast::terminal::Literal::String(s.clone())),
-            parse_chained_binding(tokens),
+            Box::new(ast::terminal::Literal::String(s.clone()))
         ),
         (pos, token) => ast::Expression::Error(ast::ParseError::UnexpectedToken(
             (pos, token),
             "Expected function, name, or literal binding".to_string(),
-        )),
-    }
-}
-
-fn chained_binding_append(
-    binding: Option<Box<ast::Expression>>,
-    append: Option<Box<ast::Expression>>,
-) -> Option<Box<ast::Expression>> {
-    match binding {
-        Some(binding) => match (*binding).clone() {
-            ast::Expression::Literal(sym, chain) => {
-                let chain = if chain.is_some() {
-                    chained_binding_append(chain, append)
-                } else {
-                    append
-                };
-                Some(Box::new(ast::Expression::Literal(sym, chain)))
-            },
-            ast::Expression::Function(sym, args, chain) => {
-                let chain = if chain.is_some() {
-                    chained_binding_append(chain, append)
-                } else {
-                    append
-                };
-                Some(Box::new(ast::Expression::Function(sym, args, chain)))
-            },
-            ast::Expression::Field(sym, mut chain) => {
-                let chain = if chain.is_some() {
-                    chained_binding_append(chain, append)
-                } else {
-                    append
-                };
-                Some(Box::new(ast::Expression::Field(sym, chain)))
-            }
-            ast::Expression::Error(_) => panic!("Error descending chained binding"),
-        },
-        None => None
-    }
-}
-
-fn parse_chained_binding(tokens: &mut Tokens) -> Option<Box<ast::Expression>> {
-    let token = match tokens.pop() {
-        Some(val) => val,
-        None => return None,
+        ))
     };
 
-    match token {
-        (pos, Token::Method(name)) => {
-            tokens.push((pos, Token::Function(name)));
-            let fun = parse_function_call(tokens);
-            let chain = parse_chained_binding(tokens);
-            match fun {
-                ast::Expression::Function(symbol, args, mut next) => {
-                    next = chained_binding_append(next, chain);
+    expr_chain.push(expr);
 
-                    Some(Box::new(ast::Expression::Function(symbol, args, next)))
-                }
-                _ => panic!("Error parsing chained binding"),
+    loop {
+        let token = match tokens.pop() {
+            Some(val) => val,
+            None => return ast::Expression::Error(ast::ParseError::UnexpectedEOF),
+        };
+
+        match token {
+            (_, Token::Method(_)) => {
+                tokens.push(token);
+                let expr = parse_function_call(tokens);
+                expr_chain.push(expr);
+            },
+            (_, Token::Member(name)) => {
+                let expr = ast::Expression::Field(
+                    Symbol {
+                        name: name.clone(),
+                    ty: Type::Undefined,
+                    }
+                );
+                expr_chain.push(expr);
+            },
+            _ => {
+                tokens.push(token);
+                break
             }
         }
-        (_, Token::Member(name)) => Some(Box::new(ast::Expression::Field(
-            Symbol {
-                name: name.clone(),
-                ty: Type::Undefined,
-            },
-            parse_chained_binding(tokens),
-        ))),
-        other => {
-            tokens.push(other);
-            None
+
+    }
+
+    expr_chain.reverse();
+
+    let mut chain_end = expr_chain.pop().unwrap();
+
+    while let Some(expr) = expr_chain.pop() {
+        chain_end = match (expr, chain_end) {
+            (ast::Expression::Literal(left_terminal),
+                ast::Expression::Field(right_symbol)) => {
+                    ast::Expression::Function(
+                        Symbol {name: "get".to_string(), ty: Type::Undefined},
+                        vec![
+                            ast::Expression::Literal(left_terminal),
+                            ast::Expression::Field(right_symbol)
+                        ]
+                    )
+                },
+            (ast::Expression::Literal(left_terminal),
+                ast::Expression::Function(right_symbol, right_args)) => {
+                    let mut args = right_args;
+                    args.insert(0, ast::Expression::Literal(left_terminal));
+                    ast::Expression::Function(
+                        right_symbol,
+                        args
+                    )
+                },
+            (ast::Expression::Field(left_symbol),
+                ast::Expression::Function(right_symbol, right_args)) => {
+                    let mut args = right_args;
+                    args.insert(0, ast::Expression::Field(left_symbol));
+                    ast::Expression::Function(
+                        right_symbol,
+                        args
+                    )
+                },
+            (ast::Expression::Field(left_symbol),
+                ast::Expression::Field(right_symbol)) => {
+                    ast::Expression::Function(
+                        Symbol {name: "get".to_string(), ty: Type::Undefined},
+                        vec![
+                            ast::Expression::Field(left_symbol),
+                            ast::Expression::Field(right_symbol)
+                        ]
+                    )
+                },
+            (ast::Expression::Function(left_symbol,
+                left_args), ast::Expression::Field(right_symbol)) => {
+                    ast::Expression::Function(
+                        Symbol {name: "get".to_string(), ty: Type::Undefined},
+                        vec![
+                            ast::Expression::Function(left_symbol, left_args),
+                            ast::Expression::Field(right_symbol)
+                        ]
+                    )
+                },
+            (ast::Expression::Function(left_symbol,
+                left_args), ast::Expression::Function(right_symbol, right_args)) => {
+                    let mut args = right_args;
+                    args.insert(0, ast::Expression::Function(left_symbol, left_args));
+                    ast::Expression::Function(
+                        right_symbol,
+                        args
+                    )
+                }
+            (_, right) => {
+                match right {
+                    ast::Expression::Literal(_) => ast::Expression::Error(ast::ParseError::Other("Unexpected literal".to_string())),
+                    ast::Expression::Function(_, _) => ast::Expression::Error(ast::ParseError::Other("Unexpected function".to_string())),
+                    ast::Expression::Field(_) => ast::Expression::Error(ast::ParseError::Other("Unexpected field".to_string())),
+                    ast::Expression::Error(_) => ast::Expression::Error(ast::ParseError::Other("Unexpected error".to_string()))
+                }
+            }
         }
     }
+
+    chain_end
 }
 
 fn parse_function_call(tokens: &mut Tokens) -> ast::Expression {
     let symbol = match tokens.pop() {
         Some(val) => match val {
-            (_, Token::Function(name)) => Symbol {
+            (_, Token::Function(name)) 
+                | (_, Token::Method(name)) => Symbol {
                 name,
                 ty: Type::Undefined,
             },
@@ -1015,7 +1037,7 @@ fn parse_function_call(tokens: &mut Tokens) -> ast::Expression {
     // Guard against empty function call
     match tokens.pop() {
         Some(val) => match val {
-            (_, Token::RightPar) => return ast::Expression::Function(symbol, vec![], None),
+            (_, Token::RightPar) => return ast::Expression::Function(symbol, vec![]),
             other => {
                 tokens.push(other);
             }
@@ -1041,7 +1063,7 @@ fn parse_function_call(tokens: &mut Tokens) -> ast::Expression {
         };
     }
 
-    ast::Expression::Function(symbol, args, None)
+    ast::Expression::Function(symbol, args)
 }
 
 fn get_errors(ast: &ast::S) -> Vec<ast::ParseError> {
@@ -1093,7 +1115,7 @@ mod tests {
 
         assert_eq!(
             ast,
-            ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(1)), None)
+            ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(1)))
         )
     }
 
@@ -1105,7 +1127,7 @@ mod tests {
 
         assert_eq!(
             ast,
-            ast::Expression::Literal(Box::new(ast::terminal::Literal::Float(1.0)), None)
+            ast::Expression::Literal(Box::new(ast::terminal::Literal::Float(1.0)))
         )
     }
 
@@ -1118,8 +1140,7 @@ mod tests {
         assert_eq!(
             ast,
             ast::Expression::Literal(
-                Box::new(ast::terminal::Literal::String("string".to_string())),
-                None
+                Box::new(ast::terminal::Literal::String("string".to_string()))
             )
         )
     }
@@ -1133,7 +1154,7 @@ mod tests {
 
             assert_eq!(
                 ast,
-                ast::Expression::Literal(Box::new(ast::terminal::Literal::Bool(true)), None)
+                ast::Expression::Literal(Box::new(ast::terminal::Literal::Bool(true)))
             )
         }
         {
@@ -1143,7 +1164,7 @@ mod tests {
 
             assert_eq!(
                 ast,
-                ast::Expression::Literal(Box::new(ast::terminal::Literal::Bool(false)), None)
+                ast::Expression::Literal(Box::new(ast::terminal::Literal::Bool(false)))
             )
         }
     }
@@ -1160,8 +1181,7 @@ mod tests {
                 Symbol {
                     name: "foo".to_string(),
                     ty: Type::Undefined
-                },
-                None
+                }
             )
         );
     }
@@ -1179,8 +1199,7 @@ mod tests {
                     name: "foo".to_string(),
                     ty: Type::Undefined
                 },
-                vec![],
-                None
+                vec![]
             )
         )
     }
@@ -1193,18 +1212,25 @@ mod tests {
 
         assert_eq!(
             ast,
-            ast::Expression::Field(
+            ast::Expression::Function(
                 Symbol {
-                    name: "foo".to_string(),
+                    name: "get".to_string(),
                     ty: Type::Undefined
                 },
-                Some(Box::new(ast::Expression::Field(
-                    Symbol {
-                        name: "bar".to_string(),
-                        ty: Type::Undefined
-                    },
-                    None
-                )))
+                vec![
+                    ast::Expression::Field(
+                        Symbol {
+                            name: "foo".to_string(),
+                            ty: Type::Undefined
+                        }
+                    ),
+                    ast::Expression::Field(
+                        Symbol {
+                            name: "bar".to_string(),
+                            ty: Type::Undefined
+                        }
+                    )
+                ]
             )
         )
     }
@@ -1217,21 +1243,22 @@ mod tests {
 
         assert_eq!(
             ast,
-            ast::Expression::Field(
+            ast::Expression::Function(
                 Symbol {
-                    name: "foo".to_string(),
+                    name: "bar".to_string(),
                     ty: Type::Undefined
                 },
-                Some(Box::new(ast::Expression::Function(
-                    Symbol {
-                        name: "bar".to_string(),
-                        ty: Type::Undefined
-                    },
-                    vec![],
-                    None
-                )))
+                vec![
+                    ast::Expression::Field(
+                        Symbol {
+                            name: "foo".to_string(),
+                            ty: Type::Undefined
+                        }
+                    )
+                ]
             )
         )
+        
     }
 
     #[test]
@@ -1244,18 +1271,18 @@ mod tests {
             ast,
             ast::Expression::Function(
                 Symbol {
-                    name: "foo".to_string(),
+                    name: "bar".to_string(),
                     ty: Type::Undefined
                 },
-                vec![],
-                Some(Box::new(ast::Expression::Function(
+                vec![
+                    ast::Expression::Function(
                     Symbol {
                         name: "bar".to_string(),
                         ty: Type::Undefined
                     },
                     vec![],
-                    None
-                )))
+                    )
+                ]
             )
         )
     }
@@ -1270,17 +1297,24 @@ mod tests {
             ast,
             ast::Expression::Function(
                 Symbol {
-                    name: "foo".to_string(),
+                    name: "get".to_string(),
                     ty: Type::Undefined
                 },
-                vec![],
-                Some(Box::new(ast::Expression::Field(
-                    Symbol {
-                        name: "bar".to_string(),
-                        ty: Type::Undefined
-                    },
-                    None
-                )))
+                vec![
+                    ast::Expression::Function(
+                        Symbol {
+                            name: "foo".to_string(),
+                            ty: Type::Undefined
+                        },
+                        vec![]
+                    ),
+                    ast::Expression::Field(
+                        Symbol {
+                            name: "bar".to_string(),
+                            ty: Type::Undefined
+                        }
+                    )
+                ]
             )
         )
     }
@@ -1295,14 +1329,13 @@ mod tests {
             ast,
             ast::Expression::Function(
                 Symbol {
-                    name: "$add".to_string(),
+                    name: "(+)".to_string(),
                     ty: Type::Undefined
                 },
                 vec![
-                    ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(1)), None),
-                    ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(2)), None)
-                ],
-                None
+                    ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(1))),
+                    ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(2)))
+                ]
             )
         )
     }
@@ -1317,7 +1350,7 @@ mod tests {
             ast,
             ast::Expression::Function(
                 Symbol {
-                    name: "$and".to_string(),
+                    name: "(&&)".to_string(),
                     ty: Type::Undefined
                 },
                 vec![
@@ -1325,19 +1358,16 @@ mod tests {
                         Symbol {
                             name: "foo".to_string(),
                             ty: Type::Undefined
-                        },
-                        None
+                        }
                     ),
                     ast::Expression::Function(
                         Symbol {
                             name: "bar".to_string(),
                             ty: Type::Undefined
                         },
-                        vec![],
-                        None
+                        vec![]
                     )
-                ],
-                None
+                ]
             )
         )
     }
@@ -1352,17 +1382,15 @@ mod tests {
             ast,
             ast::Expression::Function(
                 Symbol {
-                    name: "$incr".to_string(),
+                    name: "(++)".to_string(),
                     ty: Type::Undefined
                 },
                 vec![ast::Expression::Field(
                     Symbol {
-                        name: "foo".to_string(),
+                        name: "(--)".to_string(),
                         ty: Type::Undefined
-                    },
-                    None
-                )],
-                None
+                    }
+                )]
             )
         );
     }
@@ -1386,8 +1414,7 @@ mod tests {
                         Symbol {
                             name: "bar".to_string(),
                             ty: Type::Undefined
-                        },
-                        None
+                        }
                     )
                 ))))
             )))
@@ -1412,18 +1439,15 @@ mod tests {
                         Symbol {
                             name: "bar".to_string(),
                             ty: Type::Undefined
-                        },
-                        None
+                        }
                     ),
                     ast::Expression::Field(
                         Symbol {
                             name: "baz".to_string(),
                             ty: Type::Undefined
-                        },
-                        None
+                        }
                     )
-                ],
-                None
+                ]
             )))
         );
     }
@@ -1443,7 +1467,7 @@ mod tests {
                     ty: Type::Int
                 },
                 ast::Scope::Open(Box::new(ast::Statement::Call(Box::new(
-                    ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(1),), None)
+                    ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(1),))
                 ))))
             )
         );
@@ -1463,7 +1487,7 @@ mod tests {
                     ty: Type::Undefined
                 },
                 ast::Scope::Open(Box::new(ast::Statement::Call(Box::new(
-                    ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(1)), None)
+                    ast::Expression::Literal(Box::new(ast::terminal::Literal::Integer(1)))
                 ))))
             )
         );
@@ -1485,7 +1509,7 @@ mod tests {
                 ty: Type::Float,
             },
             ast::Scope::Open(Box::new(ast::Statement::Call(Box::new(
-                ast::Expression::Literal(Box::new(ast::terminal::Literal::Float(1.0)), None),
+                ast::Expression::Literal(Box::new(ast::terminal::Literal::Float(1.0))),
             )))),
         )));
 
@@ -1498,18 +1522,15 @@ mod tests {
                 Symbol {
                     name: "foo".to_string(),
                     ty: Type::Undefined,
-                },
-                None,
-            )],
-            None,
+                }
+            )]
         )));
 
         let stmt3 = ast::Statement::Call(Box::new(ast::Expression::Field(
             Symbol {
                 name: "foo".to_string(),
                 ty: Type::Undefined,
-            },
-            None,
+            }
         )));
 
         assert_eq!(ast, ast::Scope::Closed(vec![stmt1, stmt2, stmt3]));

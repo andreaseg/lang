@@ -40,6 +40,9 @@ impl ToHtml for ParseError {
                 .concat(),
             ParseError::UnexpectedEOF => {
                 [LI("error").as_ref(), A, "Error: EOF", EndA, EndLI].concat()
+            },
+            ParseError::Other(message) => {
+                [LI("error").as_ref(), A, message, EndA, EndLI].concat()
             }
         }
     }
@@ -199,7 +202,7 @@ impl ToHtml for Statement {
 impl ToHtml for Expression {
     fn to_html(&self) -> String {
         match &self {
-            Expression::Literal(lit, _chain) => [
+            Expression::Literal(lit) => [
                 LI("expression").as_ref(),
                 A,
                 lit.to_html().as_ref(),
@@ -207,7 +210,7 @@ impl ToHtml for Expression {
                 EndLI,
             ]
                 .concat(),
-            Expression::Field(sym, _chain) => [
+            Expression::Field(sym) => [
                 LI("expression").as_ref(),
                 A,
                 sym.to_string().as_ref(),
@@ -215,7 +218,7 @@ impl ToHtml for Expression {
                 EndLI,
             ]
                 .concat(),
-            Expression::Function(sym, _args, _chain) => [
+            Expression::Function(sym, _args) => [
                 LI("expression").as_ref(),
                 A,
                 sym.to_string().as_ref(),

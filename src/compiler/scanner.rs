@@ -99,6 +99,10 @@ make_regex!(
     (Float, r"(?P<float>\d*\.\d+)|"),
     (Integer, r"(?P<integer>\d+)|"),
     (End, r"(?P<end>;)|"),
+    (
+        OperatorFunction,
+        r"(?P<operator_function>\([<<|>>|&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|:|~|\?]\)\()|"
+    ),
     (LPar, r"(?P<lpar>\()|"),
     (RPar, r"(?P<rpar>\))|"),
     (LCurl, r"(?P<lcurl>\{)|"),
@@ -220,6 +224,7 @@ pub fn tokenize(file: File) -> Result<Vec<(TokenPosition, Token)>, Vec<ScanError
                 Re::Whitespace => {
                     continue;
                 }
+                Re::OperatorFunction => ret_tok!(Token::Function(trunc_cap(&cap, 1, 2))),
                 Re::None => unreachable!(),
             };
 
@@ -330,6 +335,42 @@ mod tests {
         test_token!("colon", ":", Token::Operator(":".to_string()));
         test_token!("not", "~", Token::Operator("~".to_string()));
         test_token!("question", "?", Token::Operator("?".to_string()));
+
+        test_token!(
+            "shiftleft_function",
+            "(<<)(",
+            Token::Function("<<".to_string())
+        );
+        test_token!(
+            "shiftright_function",
+            "(>>)(",
+            Token::Function(">>".to_string())
+        );
+        test_token!("and_function", "(&&)(", Token::Function("&&".to_string()));
+        test_token!("or_function", "(||)(", Token::Function("||".to_string()));
+        test_token!("incr_function", "(++)(", Token::Function("++".to_string()));
+        test_token!("decr_function", "(--)(", Token::Function("--".to_string()));
+        test_token!("add_function", "(+)(", Token::Function("+".to_string()));
+        test_token!("sub_function", "(-)(", Token::Function("-".to_string()));
+        test_token!("mul_function", "(*)(", Token::Function("*".to_string()));
+        test_token!("div_function", "(/)(", Token::Function("/".to_string()));
+        test_token!("bxor_function", "(^)(", Token::Function("^".to_string()));
+        test_token!("bor_function", "(|)(", Token::Function("|".to_string()));
+        test_token!("band_function", "(&)(", Token::Function("&".to_string()));
+        test_token!("geq_function", "(<=)(", Token::Function("<=".to_string()));
+        test_token!("leq_function", "(>=)(", Token::Function(">=".to_string()));
+        test_token!("less_function", "(<)(", Token::Function("<".to_string()));
+        test_token!("greater_function", "(>)(", Token::Function(">".to_string()));
+        test_token!("neq_function", "(!=)(", Token::Function("!=".to_string()));
+        test_token!("eq_function", "(==)(", Token::Function("==".to_string()));
+        test_token!("mod_function", "(%)(", Token::Function("%".to_string()));
+        test_token!("colon_function", "(:)(", Token::Function(":".to_string()));
+        test_token!("not_function", "(~)(", Token::Function("~".to_string()));
+        test_token!(
+            "question_function",
+            "(?)(",
+            Token::Function("?".to_string())
+        );
     }
 
     macro_rules! test_scanner {
