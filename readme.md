@@ -254,13 +254,13 @@ let main = {
     0 to 100
      foreach {
         int n =>
-        15 divides n then {
+        (15 divides n) then {
             print "fizzbuzz"
         }
-        or {5.divides(n)} then {
+        or (5 divides n) then {
             print "buzz"
         }
-        or {3.divides(n)} then {
+        or (3 divides n) then {
             print "fizz"
         }
         else {
