@@ -32,9 +32,8 @@ pub enum Token {
     RightPar,
     LeftCurl,
     RightCurl,
-    Function(String),
-    Method(String),
-    Member(String),
+    LeftBrace,
+    RightBrace,
     Name(String),
     Comma,
     Operator(String),
@@ -43,12 +42,12 @@ pub enum Token {
     RightArrow,
     FatRightArrow,
     Truthy(bool),
-    Const,
-    Mut,
     Wildcard,
     Error(String),
-    End,
+    Semicolon,
     Type,
+    Colon,
+    Let
 }
 
 impl fmt::Display for Token {
@@ -60,9 +59,6 @@ impl fmt::Display for Token {
             Token::RightPar => write!(f, ")"),
             Token::LeftCurl => write!(f, "{{"),
             Token::RightCurl => write!(f, "}}"),
-            Token::Function(n) => write!(f, "{}()", n),
-            Token::Method(n) => write!(f, ".{}()", n),
-            Token::Member(n) => write!(f, ".{}", n),
             Token::Name(n) => write!(f, "{}", n),
             Token::Comma => write!(f, ","),
             Token::Operator(n) => write!(f, "{}", n),
@@ -71,11 +67,10 @@ impl fmt::Display for Token {
             Token::RightArrow => write!(f, "->"),
             Token::FatRightArrow => write!(f, "=>"),
             Token::Truthy(n) => write!(f, "{}", n),
-            Token::Const => write!(f, "const"),
-            Token::Mut => write!(f, "mut"),
             Token::Wildcard => write!(f, "_"),
             Token::Type => write!(f, "type"),
-            Token::End => write!(f, ";"),
+            Token::Let => write!(f, "let"),
+            Token::Semicolon => write!(f, ";"),
             Token::Error(n) => write!(f, "Error {}", n),
         }
     }
@@ -98,34 +93,36 @@ macro_rules! make_regex {
 make_regex!(
     (Float, r"(?P<float>\d*\.\d+)|"),
     (Integer, r"(?P<integer>\d+)|"),
-    (End, r"(?P<end>;)|"),
+    (Semicolon, r"(?P<semicolon>;)|"),
     (
         OperatorFunction,
-        r"(?P<operator_function>\([<<|>>|&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|:|~|\?]\)\()|"
+        r"(?P<operator_function>\([<<|>>|&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|~|!]\))|"
     ),
     (LPar, r"(?P<lpar>\()|"),
     (RPar, r"(?P<rpar>\))|"),
     (LCurl, r"(?P<lcurl>\{)|"),
     (RCurl, r"(?P<rcurl>\})|"),
+    (LBrace, r"(?P<lcurl>\[)|"),
+    (RBrace, r"(?P<rcurl>\])|"),
     (True, r"(?P<true>true)|"),
     (False, r"(?P<false>false)|"),
-    (Const, r"(?P<const>const)|"),
-    (Mut, r"(?P<mut>mut)|"),
     (Wildcard, r"(?P<wildcard>_)|"),
     (Type, r"(?P<type>type)|"),
-    (Method, r"(?P<method>\.[[:alpha:]][[:alnum:]]*\()|"),
-    (Member, r"(?P<member>\.[[:alpha:]][[:alnum:]]*)|"),
-    (Function, r"(?P<function>[[:alpha:]][[:alnum:]]*\()|"),
+    (Let, r"(?P<let>let)|"),
     (Name, r"(?P<name>[[:alpha:]][[:alnum:]]*)|"),
     (Comma, r"(?P<comma>,)|"),
     (Rightarrow, r"(?P<rightarrow>->)|"),
     (FatRightArrow, r"(?P<fatrightarrow>=>)|"),
+    (Colon, r"(?P<colon>:)|"),
     (
         Operator,
-        r"(?P<operator><<|>>|&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|:|~|\?)|"
+        r"(?P<operator><<|>>|&&|\|\||\+\+|\-\-|\+|\-|\*|/|\^|\||&|<=|>=|<|>|!=|==|%|~|!)|"
     ),
     (Assign, r"(?P<assign>=)|"),
     (String, r#"(?P<string>"[^"]*")|"#),
+    (CommentLine, r"(?P<comment_line>//)|"),
+    (CommentStart, r"(?P<comment_start>/\*)|"),
+    (CommentEnd, r"(?P<comment_end>\*/)|"),
     (Whitespace, r"(?P<whitespace>\s*|\t*|\n*|\r*)"),
 );
 
@@ -166,10 +163,9 @@ pub fn tokenize(file: File) -> Result<Vec<(TokenPosition, Token)>, Vec<ScanError
 
     let re = get_regex();
 
-    for (num, line) in buf_reader.lines().enumerate() {
-        if line.as_ref().unwrap().starts_with("//") {
-            continue;
-        }
+    let mut is_comment = false;
+
+    'line: for (num, line) in buf_reader.lines().enumerate() {
 
         let mut last_symbol = 0;
 
@@ -197,22 +193,24 @@ pub fn tokenize(file: File) -> Result<Vec<(TokenPosition, Token)>, Vec<ScanError
             }
             last_symbol = cap.end();
 
+            if is_comment {
+                match Re::from_usize(i).unwrap() {
+                    Re::CommentEnd => is_comment = false,
+                    _ => continue
+                }
+            }
+
             let token = match Re::from_usize(i).unwrap() {
                 Re::Float => ret_tok!(Token::Float(cap.as_str().parse().unwrap())),
                 Re::Integer => ret_tok!(Token::Integer(cap.as_str().parse().unwrap())),
-                Re::End => ret_tok!(Token::End),
+                Re::Semicolon => ret_tok!(Token::Semicolon),
                 Re::LPar => ret_tok!(Token::LeftPar),
                 Re::RPar => ret_tok!(Token::RightPar),
                 Re::LCurl => ret_tok!(Token::LeftCurl),
                 Re::RCurl => ret_tok!(Token::RightCurl),
                 Re::True => ret_tok!(Token::Truthy(true)),
                 Re::False => ret_tok!(Token::Truthy(false)),
-                Re::Const => ret_tok!(Token::Const),
-                Re::Mut => ret_tok!(Token::Mut),
                 Re::Wildcard => ret_tok!(Token::Wildcard),
-                Re::Method => ret_tok!(Token::Method(trunc_cap(&cap, 1, 1))),
-                Re::Member => ret_tok!(Token::Member(trunc_cap(&cap, 1, 0))),
-                Re::Function => ret_tok!(Token::Function(trunc_cap(&cap, 0, 1))),
                 Re::Name => ret_tok!(Token::Name(cap.as_str().to_string())),
                 Re::Comma => ret_tok!(Token::Comma),
                 Re::Rightarrow => ret_tok!(Token::RightArrow),
@@ -221,11 +219,12 @@ pub fn tokenize(file: File) -> Result<Vec<(TokenPosition, Token)>, Vec<ScanError
                 Re::Assign => ret_tok!(Token::Assign),
                 Re::String => ret_tok!(Token::String(trunc_cap(&cap, 1, 1))),
                 Re::Type => ret_tok!(Token::Type),
-                Re::Whitespace => {
-                    continue;
-                }
-                Re::OperatorFunction => ret_tok!(Token::Function(trunc_cap(&cap, 1, 2))),
+                Re::Whitespace => continue,
+                Re::OperatorFunction => ret_tok!(Token::Name(cap.as_str().to_string())),
                 Re::None => unreachable!(),
+                Re::CommentLine => continue 'line,
+                Re::CommentStart => {is_comment = true; continue;},
+                Re::CommentEnd => ret_tok!(Token::Error("Comment end before start".to_string()))
             };
 
             tokens.push(token);
@@ -294,9 +293,6 @@ mod tests {
         test_token!("right_par", ")", Token::RightPar);
         test_token!("left_curl", "{", Token::LeftCurl);
         test_token!("right_curl", "}", Token::RightCurl);
-        test_token!("function", "fun(", Token::Function("fun".to_string()));
-        test_token!("method", ".map(", Token::Method("map".to_string()));
-        test_token!("member", ".val", Token::Member("val".to_string()));
         test_token!("name", "val", Token::Name("val".to_string()));
         test_token!("assign", "=", Token::Assign);
         test_token!(
@@ -307,8 +303,6 @@ mod tests {
         test_token!("right_arrow", "->", Token::RightArrow);
         test_token!("true", "true", Token::Truthy(true));
         test_token!("false", "false", Token::Truthy(false));
-        test_token!("const", "const", Token::Const);
-        test_token!("mut", "mut", Token::Mut);
         test_token!("wildcard", "_", Token::Wildcard);
         test_token!("type", "type", Token::Type);
 
@@ -338,38 +332,38 @@ mod tests {
 
         test_token!(
             "shiftleft_function",
-            "(<<)(",
-            Token::Function("<<".to_string())
+            "(<<)",
+            Token::Name("<<".to_string())
         );
         test_token!(
             "shiftright_function",
-            "(>>)(",
-            Token::Function(">>".to_string())
+            "(>>)",
+            Token::Name(">>".to_string())
         );
-        test_token!("and_function", "(&&)(", Token::Function("&&".to_string()));
-        test_token!("or_function", "(||)(", Token::Function("||".to_string()));
-        test_token!("incr_function", "(++)(", Token::Function("++".to_string()));
-        test_token!("decr_function", "(--)(", Token::Function("--".to_string()));
-        test_token!("add_function", "(+)(", Token::Function("+".to_string()));
-        test_token!("sub_function", "(-)(", Token::Function("-".to_string()));
-        test_token!("mul_function", "(*)(", Token::Function("*".to_string()));
-        test_token!("div_function", "(/)(", Token::Function("/".to_string()));
-        test_token!("bxor_function", "(^)(", Token::Function("^".to_string()));
-        test_token!("bor_function", "(|)(", Token::Function("|".to_string()));
-        test_token!("band_function", "(&)(", Token::Function("&".to_string()));
-        test_token!("geq_function", "(<=)(", Token::Function("<=".to_string()));
-        test_token!("leq_function", "(>=)(", Token::Function(">=".to_string()));
-        test_token!("less_function", "(<)(", Token::Function("<".to_string()));
-        test_token!("greater_function", "(>)(", Token::Function(">".to_string()));
-        test_token!("neq_function", "(!=)(", Token::Function("!=".to_string()));
-        test_token!("eq_function", "(==)(", Token::Function("==".to_string()));
-        test_token!("mod_function", "(%)(", Token::Function("%".to_string()));
-        test_token!("colon_function", "(:)(", Token::Function(":".to_string()));
-        test_token!("not_function", "(~)(", Token::Function("~".to_string()));
+        test_token!("and_function", "(&&)", Token::Name("&&".to_string()));
+        test_token!("or_function", "(||)", Token::Name("||".to_string()));
+        test_token!("incr_function", "(++)", Token::Name("++".to_string()));
+        test_token!("decr_function", "(--)", Token::Name("--".to_string()));
+        test_token!("add_function", "(+)", Token::Name("+".to_string()));
+        test_token!("sub_function", "(-)", Token::Name("-".to_string()));
+        test_token!("mul_function", "(*)", Token::Name("*".to_string()));
+        test_token!("div_function", "(/)", Token::Name("/".to_string()));
+        test_token!("bxor_function", "(^)", Token::Name("^".to_string()));
+        test_token!("bor_function", "(|)", Token::Name("|".to_string()));
+        test_token!("band_function", "(&)", Token::Name("&".to_string()));
+        test_token!("geq_function", "(<=)", Token::Name("<=".to_string()));
+        test_token!("leq_function", "(>=)", Token::Name(">=".to_string()));
+        test_token!("less_function", "(<)", Token::Name("<".to_string()));
+        test_token!("greater_function", "(>)", Token::Name(">".to_string()));
+        test_token!("neq_function", "(!=)", Token::Name("!=".to_string()));
+        test_token!("eq_function", "(==)", Token::Name("==".to_string()));
+        test_token!("mod_function", "(%)", Token::Name("%".to_string()));
+        test_token!("colon_function", "(:)", Token::Name(":".to_string()));
+        test_token!("not_function", "(~)", Token::Name("~".to_string()));
         test_token!(
             "question_function",
-            "(?)(",
-            Token::Function("?".to_string())
+            "(?)",
+            Token::Name("?".to_string())
         );
     }
 
@@ -410,16 +404,20 @@ mod tests {
     fn function() {
         test_scanner!(
             "call",
-            "fn fun(int x) = x + 1",
-            (0, 0, Token::Name("fn".to_string())),
-            (0, 3, Token::Function("fun".to_string())),
-            (0, 7, Token::Name("int".to_string())),
-            (0, 11, Token::Name("x".to_string())),
-            (0, 12, Token::RightPar),
-            (0, 14, Token::Assign),
-            (0, 16, Token::Name("x".to_string())),
-            (0, 18, Token::Operator("+".to_string())),
-            (0, 20, Token::Integer(1)),
+            "let fun = {Num x -> Num => x + 1}",
+            (0, 0, Token::Let),
+            (0, 3, Token::Name("fun".to_string())),
+            (0, 8, Token::Assign),
+            (0, 10, Token::LeftCurl),
+            (0, 11, Token::Name("Num".to_string())),
+            (0, 15, Token::Name("x".to_string())),
+            (0, 17, Token::RightArrow),
+            (0, 20, Token::Name("Num".to_string())),
+            (0, 24, Token::FatRightArrow),
+            (0, 27, Token::Name("x".to_string())),
+            (0, 29, Token::Operator("+".to_string())),
+            (0, 31, Token::Integer(1)),
+            (0, 32, Token::RightCurl),
         );
     }
 
@@ -427,16 +425,14 @@ mod tests {
     fn multiline() {
         test_scanner!(
             "multiline",
-            "Foo bar = Foo.new()\nbar.run()",
+            "Foo bar = Foo new\nbar run",
             (0, 0, Token::Name("Foo".to_string())),
             (0, 4, Token::Name("bar".to_string())),
             (0, 8, Token::Assign),
             (0, 10, Token::Name("Foo".to_string())),
-            (0, 13, Token::Method("new".to_string())),
-            (0, 18, Token::RightPar),
+            (0, 14, Token::Name("new".to_string())),
             (1, 0, Token::Name("bar".to_string())),
-            (1, 3, Token::Method("run".to_string())),
-            (1, 8, Token::RightPar),
+            (1, 4, Token::Name("run".to_string())),
         );
     }
 
